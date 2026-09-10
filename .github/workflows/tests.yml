@@ -30,6 +30,9 @@ name: tests
 #       tiene que decir. Lo anoto como acierto del arnes y no solo como error
 #       mio: un sabotaje que no sabotea tiene que dar rojo, no verde. La leccion
 #       de diseno es la de siempre: sabotear con el replace mas corto posible.
+#   E5. (2026-09-10) Dos falsadores nuevos vivieron un rato SOLO en mi historial
+#       de shell: los corri a mano, dieron rojo, y no los cablee. Un control que
+#       nadie corre no es un control, es una anecdota. Estan abajo como 7 y 8.
 #
 # TRES VECES EN DOS SESIONES un control acierta el veredicto por la razon
 # equivocada (E1, los tests de vacacion judicial, y los de POR-DEPARTAMENTO).
@@ -245,6 +248,10 @@ jobs:
         working-directory: backend
         run: python3 test_anonimizador.py
 
+      - name: el impacto de la compuerta sobre el corpus real
+        working-directory: backend
+        run: python3 impacto_compuerta.py
+
       - name: GUARD - la reserva legal no se puede vaciar
         working-directory: backend
         run: |
@@ -298,7 +305,7 @@ jobs:
           print("OK: ninguna fixture sale a la capa publica sin matricula")
           PY
 
-      - name: SABOTAJE - los 6 falsadores de la compuerta
+      - name: SABOTAJE - los 8 falsadores de la compuerta
         working-directory: backend
         run: |
           set -uo pipefail
@@ -381,9 +388,25 @@ jobs:
           s=s.replace("            return \"institucional\"","            return \"parte\"")
           open("anonimizador.py","w").write(s)' || FALLOS=$((FALLOS+1))
 
+          # 7. Se falsea el IMPACTO MEDIDO. De ese numero (17,3% publicable)
+          #    depende una decision de producto: cuan central es el flujo de
+          #    aprobacion por matricula. Con 90% se toma la decision al reves.
+          falsear "impacto-medido-falseado" "IMPACTO-DECLARADO" '
+          s=open("anonimizador.py").read()
+          s=s.replace("\"publicables_pct\": 17.3","\"publicables_pct\": 90.0")
+          open("anonimizador.py","w").write(s)' || FALLOS=$((FALLOS+1))
+
+          # 8. La frase REFUTADA vuelve al docstring como AFIRMACION, arriba de
+          #    la seccion que la refuta. El test tiene que distinguir AFIRMAR de
+          #    CITAR-PARA-REFUTAR, que es justo lo que su v1 no hacia.
+          falsear "afirmacion-refutada-vuelve" "AFIRMACION-REFUTADA" '
+          s=open("anonimizador.py").read()
+          s=s.replace("Asi que la pieza central NO es el detector: es la COMPUERTA, y es fail-closed.","Eso conserva el valor del corpus: las normas son la MAYORIA y las que se citan.\n\nAsi que la pieza central NO es el detector: es la COMPUERTA, y es fail-closed.")
+          open("anonimizador.py","w").write(s)' || FALLOS=$((FALLOS+1))
+
           echo "----"
           if [ "${FALLOS}" -ne 0 ]; then
-            echo "FALSADORES QUE NO DISCRIMINARON: ${FALLOS} de 6"
+            echo "FALSADORES QUE NO DISCRIMINARON: ${FALLOS} de 8"
             exit 1
           fi
           if ! cmp -s anonimizador.py anonimizador.ok; then
@@ -393,7 +416,7 @@ jobs:
           fi
           rm -f anonimizador.ok
           python3 test_anonimizador.py > /dev/null
-          echo "OK: 6/6 falsadores discriminan, fuente restaurado y verde de nuevo"
+          echo "OK: 8/8 falsadores discriminan, fuente restaurado y verde de nuevo"
 
   rls:
     runs-on: ubuntu-24.04
