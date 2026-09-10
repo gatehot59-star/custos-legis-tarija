@@ -43,6 +43,25 @@ QUE ES NO MEDIDO
      las sesiones. Aceptable para un piloto, NO para produccion con varios
      workers. Declarado.
   5. No hay paginacion en `/casos`. Con 20 expedientes no importa; con 2.000 si.
+
+--------------------------------------------------------------------------------
+DOS DEFECTOS DE OPERACION QUE APARECIERON AL CORRER EL `__main__`
+--------------------------------------------------------------------------------
+Y el defecto de proceso primero, porque es el que vale: **commitee este bloque
+`__main__` sin ejecutarlo.** La regla "ningun script se commitea sin correrlo"
+la aplique a las funciones que el test toca y me la saltee en el arranque del
+servicio, que es justo la parte que corre en produccion. Al ejecutarlo:
+
+  a. Con un DSN invalido la API **arrancaba igual** e imprimia "escuchando
+     en...", porque `PostgresAlmacen` es lazy y no conecta hasta el primer
+     request. Se veia ARRIBA para systemd y para cualquier health check, y el
+     primer abogado que buscara algo se comia un 500. Ahora hay fail-fast con
+     `rc=3`. **Un servicio que arranca roto es peor que uno que no arranca:** el
+     que no arranca se ve en el `systemctl status`.
+  b. Sin `flush=True`, si systemd mata el proceso el `print` de arranque se queda
+     en el buffer y **el log se pierde**. Medido con `timeout`: con `python3` no
+     imprimia nada, con `python3 -u` si. Un servicio que no deja rastro de su
+     arranque no se puede diagnosticar.
 """
 from __future__ import annotations
 
@@ -514,13 +533,35 @@ if __name__ == "__main__":
     if not dsn:
         print("falta DATABASE_URL_APP. La API NO arranca con un almacen de "
               "prueba: SqliteAlmacen no tiene RLS y el aislamiento de un bufete "
-              "no puede depender de un WHERE de Python.", file=sys.stderr)
+              "no puede depender de un WHERE de Python.", file=sys.stderr,
+              flush=True)
         sys.exit(2)
-    app = App(almacen=PostgresAlmacen(dsn))
+    almacen = PostgresAlmacen(dsn)
+
+    # FAIL-FAST. `PostgresAlmacen` es lazy: no conecta hasta el primer request.
+    # MEDIDO hoy: con un DSN invalido la API arrancaba igual, imprimia
+    # "escuchando en..." y se veia ARRIBA para systemd y para cualquier health
+    # check. El primer abogado que buscara algo se comia un 500.
+    # Un servicio que arranca roto es peor que uno que no arranca: el que no
+    # arranca se ve en el `systemctl status`.
+    try:
+        almacen.uso_total()
+    except Exception as e:  # noqa: BLE001
+        print(f"NO SE PUDO CONECTAR A POSTGRES: {type(e).__name__}: {e}\n"
+              "La API no arranca a medias. Revisar DATABASE_URL_APP y que "
+              "infra/init.sql este aplicado.", file=sys.stderr, flush=True)
+        sys.exit(3)
+
+    app = App(almacen=almacen)
     host = os.environ.get("CUSTOS_HOST", "127.0.0.1")
     puerto = int(os.environ.get("CUSTOS_PUERTO", "8090"))
     if host != "127.0.0.1":
         print(f"ATENCION: escuchando en {host}, no en loopback. Eso solo tiene "
-              "sentido si nginx esta en otra maquina.", file=sys.stderr)
-    print(f"custos-legis {VERSION} en http://{host}:{puerto}")
+              "sentido si nginx esta en otra maquina.", file=sys.stderr,
+              flush=True)
+    # flush=True a proposito: MEDIDO que sin el, si systemd mata el proceso el
+    # print se queda en el buffer y el log se pierde. Un servicio que no deja
+    # rastro de su arranque es un servicio que no se puede diagnosticar.
+    print(f"custos-legis {VERSION} en http://{host}:{puerto} "
+          f"(almacen: Postgres con RLS)", flush=True)
     servir(app, host, puerto).serve_forever()
