@@ -23,6 +23,11 @@ name: tests
 #       el veredicto correcto por la razon equivocada, ahora en el sentido
 #       inverso. Un guard que depende de un texto libre es fragil por diseno.
 #       Se reemplaza por ETIQUETAS estables que el test emite a proposito.
+#
+# TRES VECES EN DOS SESIONES un control acierta el veredicto por la razon
+# equivocada (E1, los tests de vacacion judicial, y los de POR-DEPARTAMENTO).
+# El patron es siempre el mismo: la asercion mira el RESULTADO y no el MECANISMO.
+# Por eso cada falsador de aca exige una etiqueta que apunta al mecanismo.
 
 on:
   workflow_dispatch:
@@ -42,6 +47,10 @@ jobs:
         working-directory: backend
         run: python3 test_plazos.py
 
+      - name: tests del calendario judicial
+        working-directory: backend
+        run: python3 test_calendario.py
+
       - name: GUARD - ningun plazo puede declararse CONFIRMADO sin abogado
         working-directory: backend
         run: |
@@ -59,15 +68,44 @@ jobs:
             exit 1
           fi
 
-      - name: SABOTAJE - los 5 falsadores tienen que dar el ROJO ESPERADO
+      - name: GUARD - todo periodo del calendario cita su fuente
+        working-directory: backend
+        run: |
+          set -uo pipefail
+          # Puede dar rojo: si alguien agrega una vacacion judicial sin decir de
+          # que resolucion o circular salio, aca se cae. Una fecha sin fuente es
+          # exactamente el dato que despues nadie puede verificar.
+          python3 - <<'PY'
+          import sys
+          import calendario_judicial as C
+          malos = []
+          todos = ([p for p, _ in C.TARIJA_COMPLETOS]
+                   + list(C.TARIJA_INCOMPLETOS)
+                   + [p for p, _ in C.OTROS_DEPARTAMENTOS])
+          for p in todos:
+              if len(p.circular.strip()) < 25 or not p.departamento.strip():
+                  malos.append(f"{p.desde} {p.departamento}: {p.circular!r}")
+          print(f"periodos revisados: {len(todos)}")
+          if malos:
+              print("ROJO: periodos sin fuente citable:")
+              for m in malos:
+                  print("  " + m)
+              sys.exit(1)
+          print("OK: todos los periodos citan fuente")
+          PY
+
+      - name: SABOTAJE - los 9 falsadores tienen que dar el ROJO ESPERADO
         working-directory: backend
         run: |
           set -uo pipefail
           cp plazos.py plazos.ok
+          cp calendario_judicial.py calendario_judicial.ok
 
           falsear() {
-            local nombre="$1" etiqueta="$2" py="$3"
+            # $1 nombre, $2 etiqueta esperada, $3 test a correr, $4 script python
+            local nombre="$1" etiqueta="$2" test="$3" py="$4"
             cp plazos.ok plazos.py
+            cp calendario_judicial.ok calendario_judicial.py
             # HAY QUE BORRAR EL BYTECODE. Un __pycache__ del modulo bueno hace que
             # el sabotaje NO se vea. Me paso en brain-env: restaure el fuente, el
             # md5 coincidia, y el test seguia rojo porque el .pyc saboteado
@@ -75,8 +113,9 @@ jobs:
             rm -rf __pycache__
             python3 -c "$py"
             local RC=0
-            python3 test_plazos.py > /tmp/sab.txt 2>&1 || RC=$?
+            python3 "$test" > /tmp/sab.txt 2>&1 || RC=$?
             cp plazos.ok plazos.py
+            cp calendario_judicial.ok calendario_judicial.py
             rm -rf __pycache__
             if [ "${RC}" -eq 0 ]; then
               echo "ROJO DEL FALSADOR [${nombre}]: el test PASO con el codigo saboteado."
@@ -88,6 +127,7 @@ jobs:
               echo "  El test detecta algo, y no es lo que este sabotaje rompe."
               grep 'ETIQUETAS_ROJAS' /tmp/sab.txt || echo "  (ninguna etiqueta)"
               grep '^  ROJO' /tmp/sab.txt | head -8 || true
+              tail -5 /tmp/sab.txt || true
               return 1
             fi
             echo "OK  [${nombre}] -> rojo esperado ${etiqueta}"
@@ -97,10 +137,12 @@ jobs:
 
           FALLOS=0
 
+          # ---- PLAZOS -------------------------------------------------------
+
           # 1. El bug medido hoy: si el umbral de 15 dias se desactiva, todo
           #    vuelve a contarse en habiles como en la v1, y traslado_demanda
           #    regala 15 dias.
-          falsear "umbral-15-desactivado" "PLAZO-CORRIDO-90II" '
+          falsear "umbral-15-desactivado" "PLAZO-CORRIDO-90II" "test_plazos.py" '
           s=open("plazos.py").read()
           s=s.replace("UMBRAL_HABILES_CIVIL = 15","UMBRAL_HABILES_CIVIL = 999")
           open("plazos.py","w").write(s)' || FALLOS=$((FALLOS+1))
@@ -109,7 +151,7 @@ jobs:
           #    ATENCION: las 4 aserciones ORIGINALES de vacacion pasaban con este
           #    mismo sabotaje, porque la prorroga del 90.III las rescataba. Las
           #    que discriminan miran el computo dia por dia.
-          falsear "vacacion-no-suspende" "VACACION-NO-CONSUME" '
+          falsear "vacacion-no-suspende" "VACACION-NO-CONSUME" "test_plazos.py" '
           s=open("plazos.py").read()
           s=s.replace("    susp = calendario.suspendido(fecha) if calendario else None","    susp = None")
           s=s.replace("            cuenta = not suspendido","            cuenta = True")
@@ -118,14 +160,14 @@ jobs:
           # 3. El plazo arranca en base+1 sin buscar el dia HABIL (art. 90.I).
           #    Solo se nota en computo corrido: en habiles el sabado no cuenta
           #    igual, asi que el test de habiles NO discriminaba.
-          falsear "arranque-sin-buscar-habil" "ARRANQUE-HABIL" '
+          falsear "arranque-sin-buscar-habil" "ARRANQUE-HABIL" "test_plazos.py" '
           s=open("plazos.py").read()
           s=s.replace("        if marca == \"habil\":\n            inicio = cursor\n            break","        inicio = cursor\n        break")
           open("plazos.py","w").write(s)' || FALLOS=$((FALLOS+1))
 
           # 4. La hora de vencimiento penal (24:00, art. 130) se iguala a la
           #    civil. Son horas de diferencia y deciden si un escrito entro.
-          falsear "hora-penal-igual-a-civil" "HORA-PENAL" '
+          falsear "hora-penal-igual-a-civil" "HORA-PENAL" "test_plazos.py" '
           s=open("plazos.py").read()
           s=s.replace("HORA_VENCIMIENTO_PENAL = _dt.time(23, 59, 59)","HORA_VENCIMIENTO_PENAL = _dt.time(18, 0, 0)")
           open("plazos.py","w").write(s)' || FALLOS=$((FALLOS+1))
@@ -133,26 +175,59 @@ jobs:
           # 5. El modulo declara CONFIRMADO sin circular del Tribunal
           #    Departamental. Es la mentira mas peligrosa: una fecha con cara de
           #    cierta sobre un calendario que nadie cargo.
-          falsear "confirmado-sin-calendario" "SIN-CALENDARIO-NO-MEDIDO" '
+          falsear "confirmado-sin-calendario" "SIN-CALENDARIO-NO-MEDIDO" "test_plazos.py" '
           s=open("plazos.py").read()
           s=s.replace("    estado = NO_MEDIDO if sin_cobertura else CONFIRMADO","    estado = CONFIRMADO")
           open("plazos.py","w").write(s)' || FALLOS=$((FALLOS+1))
 
+          # ---- CALENDARIO ---------------------------------------------------
+
+          # 6. Un periodo con el fin NO MEDIDO declara cobertura igual.
+          #    Registrar no es confirmar.
+          falsear "incompleto-declara-cobertura" "REGISTRAR-NO-ES-CONFIRMAR" "test_calendario.py" '
+          s=open("calendario_judicial.py").read()
+          s=s.replace("cal.registrar(p, cubre=False)","cal.registrar(p)")
+          open("calendario_judicial.py","w").write(s)' || FALLOS=$((FALLOS+1))
+
+          # 7. El calendario ignora el departamento. MEDIDO que importa: en 2025
+          #    Potosi arranco el 8-dic y Santa Cruz el 9-dic.
+          falsear "calendario-ignora-departamento" "FILTRO-DEPARTAMENTO" "test_calendario.py" '
+          s=open("plazos.py").read()
+          s=s.replace("            if p.departamento == self.departamento and p.contiene(f):","            if p.contiene(f):")
+          open("plazos.py","w").write(s)' || FALLOS=$((FALLOS+1))
+
+          # 8. materia_modelada acepta cualquier cosa, o sea que un contencioso
+          #    administrativo se calcularia con la regla civil.
+          falsear "materia-acepta-todo" "TERCER-REGIMEN" "test_calendario.py" '
+          s=open("plazos.py").read()
+          s=s.replace("    if n in MATERIAS_NO_MODELADAS:\n        return False, MATERIAS_NO_MODELADAS[n]\n","    return True, None\n")
+          open("plazos.py","w").write(s)' || FALLOS=$((FALLOS+1))
+
+          # 9. Se pierde la distincion entre "no fue emitido todavia" y "no lo
+          #    medi". Son dos pendientes distintos y uno de los dos no es mio.
+          falsear "no-distingue-no-emitido" "NO-EMITIDO" "test_calendario.py" '
+          s=open("calendario_judicial.py").read()
+          s=s.replace("    if anio == hoy.year and hoy.month < MES_EN_QUE_SE_FIJA[0]:","    if False:")
+          open("calendario_judicial.py","w").write(s)' || FALLOS=$((FALLOS+1))
+
           echo "----"
           if [ "${FALLOS}" -ne 0 ]; then
-            echo "FALSADORES QUE NO DISCRIMINARON: ${FALLOS} de 5"
+            echo "FALSADORES QUE NO DISCRIMINARON: ${FALLOS} de 9"
             exit 1
           fi
 
           # La restauracion se VERIFICA, no se supone.
-          if ! cmp -s plazos.py plazos.ok; then
-            echo "ROJO: plazos.py quedo distinto del original tras los sabotajes"
-            diff plazos.ok plazos.py | head -20 || true
-            exit 1
-          fi
-          rm -f plazos.ok
+          for f in plazos calendario_judicial; do
+            if ! cmp -s "${f}.py" "${f}.ok"; then
+              echo "ROJO: ${f}.py quedo distinto del original tras los sabotajes"
+              diff "${f}.ok" "${f}.py" | head -20 || true
+              exit 1
+            fi
+          done
+          rm -f plazos.ok calendario_judicial.ok
           python3 test_plazos.py > /dev/null
-          echo "OK: 5/5 falsadores discriminan, fuente restaurado y verde de nuevo"
+          python3 test_calendario.py > /dev/null
+          echo "OK: 9/9 falsadores discriminan, fuentes restauradas y verde de nuevo"
 
   rls:
     runs-on: ubuntu-24.04
