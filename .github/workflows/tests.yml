@@ -229,6 +229,161 @@ jobs:
           python3 test_calendario.py > /dev/null
           echo "OK: 9/9 falsadores discriminan, fuentes restauradas y verde de nuevo"
 
+  privacidad:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: tests de la compuerta de publicacion
+        working-directory: backend
+        run: python3 test_anonimizador.py
+
+      - name: GUARD - la reserva legal no se puede vaciar
+        working-directory: backend
+        run: |
+          set -uo pipefail
+          # Puede dar rojo. Cuenta ESTRUCTURA: la longitud de las tuplas, no
+          # palabras en el archivo. Si alguien borra un disparador de NNA o de
+          # violencia para "publicar mas jurisprudencia", aca se cae.
+          python3 - <<'PY'
+          import sys
+          import anonimizador as A
+          faltan = []
+          for clave in ("menor", "adolescente", "infante", "violacion",
+                        "violencia", "feminicidio", "abuso", "victima",
+                        "agresor", "trata", "tutela", "filiacion"):
+              if not any(clave in p for p, _ in A.DISPARADORES_RESERVA):
+                  faltan.append(clave)
+          print(f"disparadores de reserva: {len(A.DISPARADORES_RESERVA)}")
+          print(f"materias de reserva: {sorted(A.MATERIAS_RESERVA)}")
+          if faltan:
+              print("ROJO: desaparecieron disparadores de reserva legal: "
+                    + ", ".join(faltan))
+              sys.exit(1)
+          if len(A.MATERIAS_RESERVA) < 4:
+              print("ROJO: la lista de materias de reserva se encogio")
+              sys.exit(1)
+          print("OK: la reserva legal esta completa")
+          PY
+
+      - name: GUARD - ninguna fixture pasa a publica sin aprobacion humana
+        working-directory: backend
+        run: |
+          set -uo pipefail
+          # Este es el guard que mas importa del repo: es el bloqueador #1.
+          # Si alguna de las 9 fixtures (6 reales, 3 sinteticas) sale publicable
+          # sin matricula, la compuerta esta abierta.
+          python3 - <<'PY'
+          import sys
+          import anonimizador as A
+          import fixtures_reales as F
+          malos = []
+          for texto, materia, proc, sint, esp in F.FIXTURES:
+              v = A.evaluar(texto, materia)
+              if v.publicable:
+                  malos.append(f"{proc} -> {v.decision.value}")
+          print(f"fixtures evaluadas: {len(F.FIXTURES)}")
+          if malos:
+              print("ROJO: la compuerta dejo pasar sin aprobacion:")
+              for m in malos:
+                  print("  " + m)
+              sys.exit(1)
+          print("OK: ninguna fixture sale a la capa publica sin matricula")
+          PY
+
+      - name: SABOTAJE - los 6 falsadores de la compuerta
+        working-directory: backend
+        run: |
+          set -uo pipefail
+          cp anonimizador.py anonimizador.ok
+
+          falsear() {
+            local nombre="$1" etiqueta="$2" py="$3"
+            cp anonimizador.ok anonimizador.py
+            rm -rf __pycache__
+            python3 -c "$py"
+            local RC=0
+            python3 test_anonimizador.py > /tmp/sab.txt 2>&1 || RC=$?
+            cp anonimizador.ok anonimizador.py
+            rm -rf __pycache__
+            if [ "${RC}" -eq 0 ]; then
+              echo "ROJO DEL FALSADOR [${nombre}]: el test PASO con la compuerta saboteada."
+              return 1
+            fi
+            if ! grep -q "ETIQUETAS_ROJAS:.*${etiqueta}" /tmp/sab.txt; then
+              echo "ROJO DEL FALSADOR [${nombre}]: fallo, pero NO por ${etiqueta}."
+              grep 'ETIQUETAS_ROJAS' /tmp/sab.txt || echo "  (ninguna etiqueta)"
+              grep '^  ROJO' /tmp/sab.txt | head -8 || true
+              return 1
+            fi
+            echo "OK  [${nombre}] -> rojo esperado ${etiqueta}"
+            grep '^  ROJO' /tmp/sab.txt | head -3 || true
+            return 0
+          }
+
+          FALLOS=0
+
+          # 1. La reserva legal se desactiva: las causas de NNA y violencia
+          #    saldrian a la capa publica.
+          falsear "reserva-legal-desactivada" "RESERVA-LEGAL" '
+          s=open("anonimizador.py").read()
+          s=s.replace("    for patron, razon in DISPARADORES_RESERVA:","    for patron, razon in ():")
+          s=s.replace("MATERIAS_RESERVA = frozenset({\"familiar\", \"familia\", \"ninez_adolescencia\", \"nna\"})","MATERIAS_RESERVA = frozenset()")
+          open("anonimizador.py","w").write(s)' || FALLOS=$((FALLOS+1))
+
+          # 2. El extracto se publica SIN aprobacion de matricula. Es el
+          #    sabotaje que reproduce el estado actual del corpus.
+          falsear "extracto-sin-matricula" "CERO-FUGAS" '
+          s=open("anonimizador.py").read()
+          s=s.replace("    if not aprobado_por_matricula:","    if False:")
+          open("anonimizador.py","w").write(s)' || FALLOS=$((FALLOS+1))
+
+          # 3. Las senas normativas DEBILES vuelven a establecer la clase: una
+          #    Sentencia Constitucional que cita el art. 130 se publica como si
+          #    fuera una ley. Este es el defecto que medi en mi propia v1.
+          falsear "senas-debiles-cuentan" "SENA-DEBIL" '
+          s=open("anonimizador.py").read()
+          s=s.replace("    fuertes = [p for p in SENAS_NORMATIVO_FUERTES if re.search(p, t, re.I)]","    fuertes = [p for p in SENAS_NORMATIVO_FUERTES + SENAS_NORMATIVO_DEBILES if re.search(p, t, re.I)]")
+          open("anonimizador.py","w").write(s)' || FALLOS=$((FALLOS+1))
+
+          # 4. El seudonimo usa las iniciales. En un juzgado de Tarija con dos
+          #    salas civiles, las iniciales reidentifican.
+          falsear "seudonimo-con-iniciales" "SEUDONIMO-ESTABLE" '
+          s=open("anonimizador.py").read()
+          s=s.replace("    return f\"[PARTE-{h[:8].upper()}]\"","    return \"[PARTE-\" + \"\".join(w[0] for w in nombre.split()).upper() + \"]\"")
+          open("anonimizador.py","w").write(s)' || FALLOS=$((FALLOS+1))
+
+          # 5. La ficha publica devuelve todo el metadato, incluido texto_crudo
+          #    y parte_actora.
+          falsear "ficha-devuelve-todo" "FICHA-LIMPIA" '
+          s=open("anonimizador.py").read()
+          s=s.replace("    ficha = {k: meta.get(k) for k in permitidos}","    ficha = dict(meta)")
+          open("anonimizador.py","w").write(s)' || FALLOS=$((FALLOS+1))
+
+          # 6. Se pierde el rol institucional: el nombre del Magistrado Relator
+          #    se tapa como si fuera una parte, y la cita queda sin trazabilidad.
+          #    El error en ESTA direccion no es una fuga, es destruir el producto.
+          falsear "autoridad-tratada-como-parte" "AUTORIDAD-INTACTA" '
+          s=open("anonimizador.py").read()
+          s=s.replace("""    for p in ROL_INSTITUCIONAL:
+        if re.search(p + r"\\s*$", prev, re.I):
+            return "institucional"""","")
+          open("anonimizador.py","w").write(s)' || FALLOS=$((FALLOS+1))
+
+          echo "----"
+          if [ "${FALLOS}" -ne 0 ]; then
+            echo "FALSADORES QUE NO DISCRIMINARON: ${FALLOS} de 6"
+            exit 1
+          fi
+          if ! cmp -s anonimizador.py anonimizador.ok; then
+            echo "ROJO: anonimizador.py quedo distinto tras los sabotajes"
+            diff anonimizador.ok anonimizador.py | head -20 || true
+            exit 1
+          fi
+          rm -f anonimizador.ok
+          python3 test_anonimizador.py > /dev/null
+          echo "OK: 6/6 falsadores discriminan, fuente restaurado y verde de nuevo"
+
   rls:
     runs-on: ubuntu-24.04
     services:
