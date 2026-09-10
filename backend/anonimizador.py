@@ -28,8 +28,31 @@ Asi que la pieza central NO es el detector: es la COMPUERTA, y es fail-closed.
   4. Si la compuerta encuentra UN candidato que no puede clasificar, RETIENE el
      documento. No lo publica "mejorado".
 
-Eso conserva el valor del corpus (las normas, que son la mayoria y las que se
-vcitan) sin apostar a que un regex entienda apellidos bolivianos.
+--------------------------------------------------------------------------------
+LA JUSTIFICACION QUE ESCRIBI PRIMERO Y QUE ESTA REFUTADA
+--------------------------------------------------------------------------------
+La v1 de este docstring decia que el reparto "conserva el valor del corpus (las
+normas, que son la MAYORIA y las que se citan)". Lo escribi sin medirlo.
+
+Lo medi con `impacto_compuerta.py` contra las fuentes que el propio corpus
+publica en /estado (GENESIS 5.030 + Gaceta Tarija 1.034 + LexiVox 15 = 6.079):
+
+    PUBLICO   normativo         1.049   17,3%
+    RETENIDO  jurisprudencial   5.030   82,7%
+
+**Las normas son el 17,3%, no la mayoria. La compuerta cierra 5 de cada 6
+documentos.**
+
+Eso NO invalida la compuerta: el argumento de que un detector es fail-open sigue
+en pie y esta medido aparte. **Invalida la frase con que la vendi**, y cambia una
+decision de producto: la aprobacion por matricula NO es la excepcion para un
+caso raro, es **el camino principal** para 5 de cada 6 documentos. Si el flujo de
+aprobacion es incomodo, el producto es incomodo, y eso hay que diseñarlo sabiendo
+el numero.
+
+Y por PASAJE es probablemente PEOR: un Auto Supremo es mas largo que una
+resolucion de la Asamblea. El corpus declara 78.930 pasajes y no publica su
+desglose por fuente, asi que eso queda NO MEDIDO.
 
 --------------------------------------------------------------------------------
 LA CATEGORIA IMPORTA (E-01) Y AQUI SE PAGA CARO
@@ -48,9 +71,16 @@ protege nada en el otro. Por eso hay clasificacion por ROL, no solo deteccion.
 --------------------------------------------------------------------------------
 QUE ES NO MEDIDO, y es mucho
 --------------------------------------------------------------------------------
-  1. RECALL CONTRA EL CORPUS REAL. Intente correr el endpoint del corpus el
-     2026-09-10 y NO RESPONDIO. Todo lo medido aca es contra 9 fixtures, 6
+  1. RECALL CONTRA EL CORPUS REAL. Todo lo medido aca es contra 9 fixtures, 6
      reales y 3 sinteticos. Es un piso, no un veredicto.
+
+     Y CORRIJO ALGO QUE ESCRIBI MAL: la v1 de esta lista decia "intente correr
+     el endpoint del corpus y NO RESPONDIO", como si fuera un misterio. **No lo
+     era: el acceso publico lo cerre YO seis horas antes**, por orden de Abraham,
+     y quedo commiteado en `corpus-legal-tarija/CIERRE-PUBLICO-2026-09-10.md`
+     con 12 rutas dando 503 y control positivo por SSH. Declarar NO MEDIDO algo
+     que estaba medido y commiteado en el mismo espacio de trabajo no es falta
+     de informacion: es haber dejado de buscar.
   2. INDEPENDENCIA (W-01). Escribi el detector Y elegi los fixtures. Los 6
      reales reducen el problema, no lo eliminan. La medicion que vale es
      contra el corpus, y con un tercero eligiendo la muestra.
@@ -86,6 +116,23 @@ class Decision(str, Enum):
     PUBLICO = "publico"
     RETENIDO = "retenido"
     RESERVA_LEGAL = "reserva_legal"
+
+
+# ---------------------------------------------------------------------------
+# IMPACTO MEDIDO de esta compuerta sobre el corpus real (2026-09-10).
+# Vive aca y no solo en un .md para que el numero viaje con el codigo: la
+# decision de producto que depende de el es "cuan central es el flujo de
+# aprobacion por matricula", y la respuesta es MUY central.
+# Re-medir con `impacto_compuerta.py` cuando el corpus cambie de tamano.
+# ---------------------------------------------------------------------------
+IMPACTO_MEDIDO = {
+    "fecha": "2026-09-10",
+    "corpus": "corpus-legal-tarija, 6.079 documentos",
+    "publicables_pct": 17.3,   # normativa: 1.049
+    "retenidos_pct": 82.7,     # jurisprudencia: 5.030
+    "instrumento": "impacto_compuerta.py",
+    "no_medido": "el reparto por pasaje (78.930 pasajes sin desglose por fuente)",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -411,6 +458,10 @@ def evaluar(texto: str, materia: str | None = None, *,
     real NO es el detector: es que la capa publica no muestre texto libre de
     jurisprudencia. Con eso la superficie de fuga es CERO por construccion, y no
     depende de que un regex entienda apellidos bolivianos.
+
+    Y OJO CON EL COSTO, medido: eso retiene el 82,7% del corpus (ver
+    IMPACTO_MEDIDO). El flujo de `aprobado_por_matricula` no es un caso de
+    borde, es el camino de 5 de cada 6 documentos.
     """
     res = reserva_legal(texto, materia)
     clase, motivos_clase = clasificar(texto, tipo_declarado)
