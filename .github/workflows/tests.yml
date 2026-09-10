@@ -23,6 +23,13 @@ name: tests
 #       el veredicto correcto por la razon equivocada, ahora en el sentido
 #       inverso. Un guard que depende de un texto libre es fragil por diseno.
 #       Se reemplaza por ETIQUETAS estables que el test emite a proposito.
+#   E4. (corrida #15) El falsador 6 de privacidad tenia un SyntaxError: usaba un
+#       triple-quote que terminaba en comilla y escapaba `\\s` donde el fuente
+#       tiene `\s`, asi que el script de sabotaje NO APLICO NADA. El paso fallo
+#       con "el test PASO con la compuerta saboteada", que es EXACTAMENTE lo que
+#       tiene que decir. Lo anoto como acierto del arnes y no solo como error
+#       mio: un sabotaje que no sabotea tiene que dar rojo, no verde. La leccion
+#       de diseno es la de siempre: sabotear con el replace mas corto posible.
 #
 # TRES VECES EN DOS SESIONES un control acierta el veredicto por la razon
 # equivocada (E1, los tests de vacacion judicial, y los de POR-DEPARTAMENTO).
@@ -242,7 +249,7 @@ jobs:
         working-directory: backend
         run: |
           set -uo pipefail
-          # Puede dar rojo. Cuenta ESTRUCTURA: la longitud de las tuplas, no
+          # Puede dar rojo. Cuenta ESTRUCTURA: los patrones de la tupla, no
           # palabras en el archivo. Si alguien borra un disparador de NNA o de
           # violencia para "publicar mas jurisprudencia", aca se cae.
           python3 - <<'PY'
@@ -308,6 +315,7 @@ jobs:
             rm -rf __pycache__
             if [ "${RC}" -eq 0 ]; then
               echo "ROJO DEL FALSADOR [${nombre}]: el test PASO con la compuerta saboteada."
+              echo "  O el sabotaje no aplico (revisar el replace), o el test no mide."
               return 1
             fi
             if ! grep -q "ETIQUETAS_ROJAS:.*${etiqueta}" /tmp/sab.txt; then
@@ -362,12 +370,15 @@ jobs:
 
           # 6. Se pierde el rol institucional: el nombre del Magistrado Relator
           #    se tapa como si fuera una parte, y la cita queda sin trazabilidad.
-          #    El error en ESTA direccion no es una fuga, es destruir el producto.
+          #    El error en ESTA direccion no es una fuga, es destruir el producto:
+          #    una cita sin el magistrado que la firmo no se puede verificar.
+          #
+          #    OJO: la v1 de ESTE sabotaje borraba el bloque entero con un
+          #    triple-quote y tenia un SyntaxError, asi que no aplicaba nada y la
+          #    corrida #15 fallo. El replace mas corto es el mas confiable.
           falsear "autoridad-tratada-como-parte" "AUTORIDAD-INTACTA" '
           s=open("anonimizador.py").read()
-          s=s.replace("""    for p in ROL_INSTITUCIONAL:
-        if re.search(p + r"\\s*$", prev, re.I):
-            return "institucional"""","")
+          s=s.replace("            return \"institucional\"","            return \"parte\"")
           open("anonimizador.py","w").write(s)' || FALLOS=$((FALLOS+1))
 
           echo "----"
