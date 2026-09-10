@@ -2,12 +2,22 @@ name: tests
 
 # POR QUE POSTGRES REAL Y NO UN MOCK: RLS es una funcion del planificador de
 # PostgreSQL, que reescribe cada consulta agregando el predicado de la politica.
-# Un mock de Python no ejecuta el planificador, asi que un test "de RLS" sobre
-# un mock da verde siempre y no prueba nada.
+# Un mock de Python no ejecuta el planificador, asi que un test de RLS sobre un
+# mock da verde siempre y no prueba nada.
 #
 # Y por que en Actions y no en la VM: la VM sirve el corpus en produccion con 2
 # nucleos. Levantar Postgres ahi para un test compite con el buscador que el
 # bufete va a usar. Actions es efimero y gratis en repo publico.
+#
+# DEFECTOS PROPIOS DE ESTE WORKFLOW, corregidos en la v2 y anotados para no
+# repetirlos:
+#   E1. El sabotaje del RLS imprimio "OK: la fuga fue detectada" SIN detectar
+#       ninguna: el test fallaba por mi contra-test de conteo (siembra acumulada
+#       entre corridas). Un control que acierta el veredicto por la razon
+#       equivocada no es un control. Ahora se exige la ETIQUETA del rojo.
+#   E2. `grep 'ROJO ' archivo` sin match sale con codigo 1, y con `bash -e` eso
+#       mato el paso entero. Es el mismo defecto del `grep -c` que ya tengo
+#       documentado: un grep vacio no es un error del sistema.
 
 on:
   workflow_dispatch:
@@ -30,26 +40,32 @@ jobs:
         working-directory: backend
         run: |
           set -uo pipefail
-          # Un test que nunca falla no es un test. Se rompe el calculo de dias
-          # habiles a proposito y se exige que el test lo cace.
           cp plazos.py plazos.ok
           sed -i 's/if fecha.weekday() >= 5:/if fecha.weekday() >= 7:/' plazos.py
           # HAY QUE BORRAR EL BYTECODE. Un __pycache__ del modulo bueno hace que
-          # el sabotaje NO se vea. Me paso hoy en brain-env: restaure el fuente,
-          # el md5 coincidia, y el test seguia rojo porque el .pyc saboteado
+          # el sabotaje NO se vea. Me paso en brain-env: restaure el fuente, el
+          # md5 coincidia, y el test seguia rojo porque el .pyc saboteado
           # sobrevivio. Un cache es un instrumento contaminado.
           rm -rf __pycache__
-          if python3 test_plazos.py > /tmp/sab.txt 2>&1; then
-            echo "ROJO DEL FALSADOR: el test paso con el codigo SABOTEADO."
-            echo "No puede dar rojo, asi que su verde no vale nada."
-            cp plazos.ok plazos.py
-            exit 1
-          fi
-          echo "OK: sabotaje detectado. Rojos hallados:"
-          grep -c ROJO /tmp/sab.txt
-          grep 'ROJO ' /tmp/sab.txt | head -5
+          RC=0
+          python3 test_plazos.py > /tmp/sab.txt 2>&1 || RC=$?
           cp plazos.ok plazos.py
           rm -rf __pycache__
+          if [ "${RC}" -eq 0 ]; then
+            echo "ROJO DEL FALSADOR: el test paso con el codigo SABOTEADO."
+            echo "No puede dar rojo, asi que su verde no vale nada."
+            exit 1
+          fi
+          # Se exige el rojo ESPERADO, no cualquiera: el sabotaje rompe los dias
+          # habiles, asi que el vencimiento tiene que caer mal.
+          if ! grep -q 'ROJO vencimiento habil' /tmp/sab.txt; then
+            echo "ROJO DEL FALSADOR: fallo, pero NO por el vencimiento."
+            echo "El test detecta algo, y no es lo que este sabotaje rompe."
+            sed -n '1,40p' /tmp/sab.txt
+            exit 1
+          fi
+          echo "OK: sabotaje detectado con el rojo esperado."
+          grep 'ROJO ' /tmp/sab.txt | head -5 || true
           python3 test_plazos.py > /dev/null
           echo "OK: restaurado y verde de nuevo"
 
@@ -68,6 +84,10 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/custos
+      DATABASE_URL_APP: postgresql://custos_app:CAMBIAR_EN_PRODUCCION@localhost:5432/custos
+      PGPASSWORD: postgres
     steps:
       - uses: actions/checkout@v4
 
@@ -78,24 +98,18 @@ jobs:
           python3 -m pip install --quiet 'psycopg[binary]'
 
       - name: aplicar el esquema
-        env:
-          PGPASSWORD: postgres
         run: |
           set -uo pipefail
           psql -h localhost -U postgres -d custos -v ON_ERROR_STOP=1 -f infra/init.sql
-          echo "--- tablas ---"
           psql -h localhost -U postgres -d custos -c "\dt"
-          echo "--- politicas RLS ---"
           psql -h localhost -U postgres -d custos -c "SELECT tablename, policyname FROM pg_policies ORDER BY tablename"
 
       - name: GUARD - las tablas de inquilino tienen RLS FORZADO
-        env:
-          PGPASSWORD: postgres
         run: |
           set -uo pipefail
-          # Puede dar rojo: si alguien agrega una tabla con tenant_id y olvida
-          # el RLS, aca se cae. ENABLE no alcanza: sin FORCE, el DUENO de la
-          # tabla ignora las politicas.
+          # Puede dar rojo: si alguien agrega una tabla con tenant_id y olvida el
+          # RLS, aca se cae. ENABLE no alcanza: sin FORCE, el DUENO de la tabla
+          # ignora las politicas.
           N=$(psql -h localhost -U postgres -d custos -tAc "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relrowsecurity AND c.relforcerowsecurity")
           echo "tablas con RLS forzado: ${N}"
           if [ "${N}" -lt 5 ]; then
@@ -104,27 +118,35 @@ jobs:
           fi
 
       - name: aislamiento entre bufetes
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/custos
-          DATABASE_URL_APP: postgresql://custos_app:CAMBIAR_EN_PRODUCCION@localhost:5432/custos
         working-directory: backend
         run: python3 test_rls.py
 
-      - name: SABOTAJE - quitar el RLS de los checkpoints debe dar ROJO
-        env:
-          PGPASSWORD: postgres
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/custos
-          DATABASE_URL_APP: postgresql://custos_app:CAMBIAR_EN_PRODUCCION@localhost:5432/custos
+      - name: SABOTAJE - quitar el RLS de los checkpoints debe dar FUGA-CKPT
         working-directory: backend
         run: |
           set -uo pipefail
-          # Reproduce el D3 de Fable: los checkpoints sin proteger. Si el test
-          # sigue verde, no estaba midiendo la fuga que dice medir.
+          # Reproduce el D3 de Fable: los checkpoints sin proteger.
           psql -h localhost -U postgres -d custos -c "ALTER TABLE public.cl_checkpoints DISABLE ROW LEVEL SECURITY"
-          if python3 test_rls.py > /tmp/rls_sab.txt 2>&1; then
+          RC=0
+          python3 test_rls.py > /tmp/rls_sab.txt 2>&1 || RC=$?
+          psql -h localhost -U postgres -d custos -c "ALTER TABLE public.cl_checkpoints ENABLE ROW LEVEL SECURITY"
+          if [ "${RC}" -eq 0 ]; then
             echo "ROJO DEL FALSADOR: el test paso SIN RLS en cl_checkpoints."
             echo "O sea que no mide la fuga del D3."
             exit 1
           fi
-          echo "OK: la fuga de checkpoints fue detectada:"
-          grep 'ROJO ' /tmp/rls_sab.txt | head -4
+          # LA PARTE QUE FALTABA: exigir el rojo ESPERADO. Sin esto, el paso daba
+          # verde con cualquier fallo, y eso ya me paso.
+          if ! grep -q 'FUGA-CKPT' /tmp/rls_sab.txt; then
+            echo "ROJO DEL FALSADOR: el test fallo, pero NO por la fuga de checkpoints."
+            echo "Etiquetas que si aparecieron:"
+            grep 'ETIQUETAS_ROJAS' /tmp/rls_sab.txt || echo "  (ninguna)"
+            sed -n '1,60p' /tmp/rls_sab.txt
+            exit 1
+          fi
+          echo "OK: la fuga de checkpoints fue detectada con su etiqueta:"
+          grep 'FUGA-CKPT' /tmp/rls_sab.txt | head -4 || true
+
+      - name: y verde otra vez con el RLS restaurado
+        working-directory: backend
+        run: python3 test_rls.py
