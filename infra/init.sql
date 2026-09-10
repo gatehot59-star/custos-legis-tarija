@@ -267,7 +267,78 @@ CREATE TABLE IF NOT EXISTS public.uso_consultas (
 CREATE INDEX IF NOT EXISTS ix_uso_ts ON public.uso_consultas (ts DESC);
 
 -- ============================================================================
--- 8. ROL DE LA APLICACION
+-- 8. APROBACIONES · el HITL, y es la tabla que hace responsable a una persona
+--
+-- HUECO QUE ESTA TABLA TAPA, encontrado el 2026-09-10 al escribir la API:
+-- `PostgresAlmacen.registrar_aprobacion()` escribia en `public.aprobaciones` y
+-- **la tabla no existia en este esquema**. El gate de acciones externas habria
+-- explotado en el primer INSERT contra Postgres. En SQLite funcionaba porque el
+-- almacen de prueba crea su propio DDL: el clasico "verde en el mock, rojo en
+-- produccion", que es justo el patron que este proyecto persigue.
+--
+-- POR QUE `sha256_entrada` ES EL CAMPO QUE IMPORTA:
+-- sin el, la aprobacion diria "el socio aprobo presentar un escrito", y despues
+-- se podria presentar OTRO escrito. Con el, la aprobacion es sobre un contenido
+-- EXACTO. Aprobar un borrador y ejecutar otro es la fuga obvia de todo esquema
+-- de aprobacion humana, y se cierra con un hash, no con confianza.
+--
+-- VA ANTES DE LOS GRANT A PROPOSITO: `GRANT ... ON ALL TABLES` solo alcanza a
+-- las tablas que YA existen. Si esta tabla se creara despues, `custos_app` no
+-- tendria permisos y el gate fallaria con "permission denied" recien en
+-- produccion.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS public.aprobaciones (
+  id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id         UUID NOT NULL REFERENCES public.tenants(id) ON DELETE CASCADE,
+  case_id           UUID REFERENCES public.cases(id) ON DELETE SET NULL,
+  usuario_id        UUID NOT NULL REFERENCES public.users(id),
+  -- Numero del Registro Publico de la Abogacia (Ley 387 art. 13). Se COPIA aca
+  -- y no se lee de `users` por join: si el abogado cambia de matricula manana,
+  -- la aprobacion de hoy tiene que seguir diciendo con cual firmo.
+  matricula         TEXT NOT NULL CHECK (length(trim(matricula)) > 0),
+  tipo              TEXT NOT NULL CHECK (tipo IN (
+                      'presentar_escrito','notificar_cliente','firmar_digital',
+                      'enviar_a_juzgado','consultar_con_credenciales',
+                      'publicar_extracto','usar_plazo_calculado')),
+  sha256_entrada    TEXT NOT NULL CHECK (sha256_entrada ~ '^[0-9a-f]{64}$'),
+  decision          TEXT NOT NULL CHECK (decision IN ('aprobado','rechazado')),
+  fundamento        TEXT,
+  -- Trazabilidad del acto: que modelo y que prompt produjeron lo aprobado.
+  modelo            TEXT,
+  prompt_sha256     TEXT,
+  creado_en         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ix_aprob_tenant
+  ON public.aprobaciones (tenant_id, creado_en DESC);
+-- Indice por el hash: es la consulta del gate, en el camino caliente.
+CREATE INDEX IF NOT EXISTS ix_aprob_hash
+  ON public.aprobaciones (tenant_id, tipo, sha256_entrada)
+  WHERE decision = 'aprobado';
+
+ALTER TABLE public.aprobaciones ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.aprobaciones FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS p_aprob ON public.aprobaciones;
+CREATE POLICY p_aprob ON public.aprobaciones
+  USING (tenant_id = app.current_tenant_id())
+  WITH CHECK (tenant_id = app.current_tenant_id());
+
+-- Evidencia = inmutable. Una aprobacion que se puede editar despues no prueba
+-- nada sobre lo que se aprobo en su momento. Este trigger puede dar rojo contra
+-- mi propio codigo si algun dia intento "corregir" una aprobacion en vez de
+-- emitir una nueva.
+CREATE OR REPLACE FUNCTION app.aprobacion_inmutable() RETURNS TRIGGER
+LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION
+    'una aprobacion es evidencia y no se modifica ni borra (intento: %). '
+    'Para cambiar de decision, registrar una aprobacion NUEVA.', TG_OP;
+END $$;
+DROP TRIGGER IF EXISTS t_aprob_inmutable ON public.aprobaciones;
+CREATE TRIGGER t_aprob_inmutable BEFORE UPDATE OR DELETE ON public.aprobaciones
+  FOR EACH ROW EXECUTE FUNCTION app.aprobacion_inmutable();
+
+-- ============================================================================
+-- 9. ROL DE LA APLICACION
 -- El rol NO debe tener BYPASSRLS. Si lo tiene, todo lo de arriba es decorativo.
 -- ============================================================================
 DO $$
