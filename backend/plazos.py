@@ -42,6 +42,12 @@ QUE ES NO MEDIDO ACA, declarado arriba porque importa:
      prorroga. Aca se prorroga, y se declara como supuesto.
   5. Ley 1173 y el buzon electronico penal: NO LEIDO. El computo penal se queda
      en el art. 130 puro.
+  6. HAY UN TERCER REGIMEN Y ESTE MODULO NO LO MODELA. El AS 589/2021 del TSJ
+     computa una demanda contenciosa administrativa "DE MOMENTO A MOMENTO"
+     (art. 264 de la Ley 1340): de la hora de la diligencia a la misma hora del
+     dia de vencimiento. Eso no es habiles ni corridos. Ver
+     MATERIAS_NO_MODELADAS: pasar una de esas como CIVIL da un resultado
+     plausible y equivocado, que es la peor clase de resultado.
 
 FUENTES ABIERTAS (2026-09-10)
   Ley 439 arts. 89-91 ..... https://www.lexivox.org/norms/BO-L-N439.html
@@ -63,6 +69,49 @@ from typing import Iterable
 class Materia(str, Enum):
     CIVIL = "civil"
     PENAL = "penal"
+
+
+# ---------------------------------------------------------------------------
+# MATERIAS QUE ESTE MODULO NO MODELA, y por que.
+#
+# Esto esta aca por el E-01: verificar el sujeto exacto Y SU CATEGORIA. Un
+# contencioso administrativo clasificado como CIVIL no explota: devuelve una
+# fecha creible y equivocada. El enum rechaza cualquier cosa que no sea CIVIL o
+# PENAL, y esta tabla existe para que el que reciba el rechazo sepa por que.
+#
+# El hallazgo es del Auto Supremo 589/2021 (Sala Contenciosa Administrativa
+# Segunda del TSJ), que dice del plazo del art. 261: "se computa desde el dia y
+# hora de la diligencia hasta la misma hora del dia de vencimiento del plazo"
+# (art. 264 de la Ley 1340), y lo llama "plazo fatal e improrrogable" que "corre
+# de momento a momento". Sumo 6 dias CORRIDOS antes de la vacacion judicial y 4
+# despues, para un plazo de 10 dias. Con el art. 90.II habrian sido habiles.
+# ---------------------------------------------------------------------------
+MATERIAS_NO_MODELADAS: dict[str, str] = {
+    "contencioso_administrativo":
+        "Ley 1340 art. 264 (via AS 589/2021 TSJ): el plazo corre DE MOMENTO A "
+        "MOMENTO, de la hora de la diligencia a la misma hora del dia de "
+        "vencimiento. No es habiles ni corridos. El texto del art. 264 NO fue "
+        "leido: el regimen esta identificado, no medido",
+    "contencioso_tributario":
+        "idem contencioso administrativo. NO MEDIDO",
+    "familia": "NO MEDIDO: no busque su norma de computo",
+    "laboral": "NO MEDIDO: no busque su norma de computo",
+    "agroambiental": "NO MEDIDO: no busque su norma de computo",
+    "constitucional":
+        "NO MEDIDO: las acciones de defensa tienen plazos de regimen propio",
+    "ninez_adolescencia": "NO MEDIDO (Ley 548)",
+}
+
+
+def materia_modelada(nombre: str) -> tuple[bool, str | None]:
+    """True si el modulo sabe computar esa materia. Si no, dice por que no."""
+    n = nombre.strip().lower().replace(" ", "_")
+    if n in (m.value for m in Materia):
+        return True, None
+    if n in MATERIAS_NO_MODELADAS:
+        return False, MATERIAS_NO_MODELADAS[n]
+    return False, ("materia desconocida: no esta modelada NI declarada como no "
+                   "modelada. No calcular hasta clasificarla")
 
 
 # Estados. Tres, nunca dos.
@@ -146,6 +195,7 @@ def feriados(anio: int, *, tarija: bool = True) -> dict[_dt.date, str]:
 #
 # Por eso cada periodo lleva su circular, su fecha de publicacion y su
 # departamento. Y por eso la ausencia de circular NO se rellena con un default.
+# Los periodos MEDIDOS viven en `calendario_judicial.py`, no aca.
 # ---------------------------------------------------------------------------
 
 
@@ -185,10 +235,17 @@ class CalendarioJudicial:
     def cubre(self, anio: int) -> bool:
         return anio in self.cobertura
 
-    def registrar(self, p: PeriodoSuspension) -> None:
+    def registrar(self, p: PeriodoSuspension, *, cubre: bool = True) -> None:
+        """Agrega un periodo. `cubre=False` para datos INCOMPLETOS.
+
+        Un periodo cuya fecha de fin salio de prensa y no de la circular se
+        registra igual (sirve para avisar), pero NO declara el anio cubierto:
+        el computo que lo toque sale NO_MEDIDO. Registrar no es confirmar.
+        """
         self.periodos.append(p)
-        for anio in range(p.desde.year, p.hasta.year + 1):
-            self.cobertura.add(anio)
+        if cubre:
+            for anio in range(p.desde.year, p.hasta.year + 1):
+                self.cobertura.add(anio)
 
     def declarar_cubierto(self, anio: int) -> None:
         """Anio revisado en circular y SIN suspensiones fuera de las cargadas."""
@@ -390,7 +447,8 @@ def computo_detallado(notificacion: _dt.date, dias: int, materia: Materia, *,
         else:
             # Corridos: cuenta habiles E inhabiles (art. 90.II), PERO la
             # vacacion judicial SUSPENDE el plazo (art. 126.IV LOJ): esos dias
-            # no lo consumen, lo pausan.
+            # no lo consumen, lo pausan. Es el mismo mecanismo que aplica el
+            # TSJ en el AS 589/2021: dias transcurridos + reinicio al retorno.
             cuenta = not suspendido
 
         if cuenta:
@@ -468,6 +526,12 @@ def habiles_restantes(desde: _dt.date, hasta: _dt.date, *, tarija: bool = True,
 # La REGLA DE COMPUTO esta confirmada por texto (art. 90 Ley 439, art. 130 CPP).
 # LA TABLA NO: los arts. 252, 261 y 365 no fueron abiertos. Son dos cosas
 # distintas y la v1 las mezclaba en una sola advertencia.
+#
+# NOTA sobre el AS 589/2021: ese fallo dice que "el art. 261 del CPC establece el
+# plazo de diez dias para interponer el recurso de apelacion", lo que CORROBORA
+# una entrada de esta tabla. NO lo tomo como confirmacion: el mismo fallo mezcla
+# el CPC abrogado con la Ley 439 y resuelve un contencioso administrativo. Una
+# corroboracion ambigua no es una medicion.
 # ---------------------------------------------------------------------------
 PLAZOS: dict[str, dict] = {
     "auto_interlocutorio": {
