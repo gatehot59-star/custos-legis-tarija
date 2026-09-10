@@ -190,7 +190,45 @@ chk("pero si la cadena de custodia",
     bool(ficha["fuente_url"]) and bool(ficha["sha256"]), True)
 chk("y dice por que no hay texto", "no publicado" in ficha["nota"], True)
 
-print("\n=== 11. Los 6 fixtures REALES: ninguno se publica por accidente ===")
+print("\n=== 11. El impacto MEDIDO viaja con el codigo ===")
+# El numero esta en el modulo y no solo en un .md porque de el depende una
+# decision de producto: cuan central es el flujo de aprobacion por matricula.
+# Si alguien cambia la compuerta, tiene que volver a medir y actualizar esto.
+imp = A.IMPACTO_MEDIDO
+chk("el modulo declara que solo el 17,3% es publicable",
+    imp["publicables_pct"], 17.3, "IMPACTO-DECLARADO")
+chk("y que se retiene el 82,7%", imp["retenidos_pct"], 82.7, "IMPACTO-DECLARADO")
+chk("los dos porcentajes suman 100",
+    round(imp["publicables_pct"] + imp["retenidos_pct"], 1), 100.0,
+    "IMPACTO-DECLARADO")
+chk("nombra el instrumento que lo midio", imp["instrumento"],
+    "impacto_compuerta.py")
+chk("y declara lo que NO midio", "pasaje" in imp["no_medido"], True)
+# La afirmacion refutada no puede volver a presentarse como afirmacion.
+#
+# DEFECTO DE MI PROPIO TEST, cazado al correrlo: la v1 de esta asercion era
+#   "son la MAYORIA y las que se citan" not in A.__doc__
+# y dio ROJO contra un docstring CORRECTO, porque el docstring CITA la frase
+# para refutarla. El grep no distingue AFIRMAR de CITAR-PARA-REFUTAR, que es el
+# mismo defecto de contar palabras en vez de estructura.
+#
+# La version estructural: si la frase aparece, tiene que aparecer DENTRO de la
+# seccion que la refuta, o sea despues del encabezado de refutacion.
+doc = A.__doc__ or ""
+chk("el docstring refuta explicitamente", "REFUTADA" in doc, True,
+    "AFIRMACION-REFUTADA")
+chk("y trae el numero medido", "17,3" in doc, True, "AFIRMACION-REFUTADA")
+if "son la MAYORIA" in doc:
+    chk("la frase vieja solo aparece DENTRO de la seccion que la refuta",
+        doc.index("REFUTADA") < doc.index("son la MAYORIA"), True,
+        "AFIRMACION-REFUTADA")
+else:
+    verdes += 1
+    print("  OK   la frase vieja no aparece en ninguna forma")
+chk("y dice que la matricula es el camino principal, no la excepcion",
+    "camino principal" in doc, True, "AFIRMACION-REFUTADA")
+
+print("\n=== 12. Los 6 fixtures REALES: ninguno se publica por accidente ===")
 reales = [f for f in F.FIXTURES if not f[3]]
 publicados = [proc for texto, materia, proc, sint, esp in reales
               if A.evaluar(texto, materia).publicable]
