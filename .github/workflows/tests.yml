@@ -1,0 +1,130 @@
+name: tests
+
+# POR QUE POSTGRES REAL Y NO UN MOCK: RLS es una funcion del planificador de
+# PostgreSQL, que reescribe cada consulta agregando el predicado de la politica.
+# Un mock de Python no ejecuta el planificador, asi que un test "de RLS" sobre
+# un mock da verde siempre y no prueba nada.
+#
+# Y por que en Actions y no en la VM: la VM sirve el corpus en produccion con 2
+# nucleos. Levantar Postgres ahi para un test compite con el buscador que el
+# bufete va a usar. Actions es efimero y gratis en repo publico.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "backend/**"
+      - "infra/**"
+      - ".github/workflows/tests.yml"
+
+jobs:
+  plazos:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: tests de plazos habiles
+        working-directory: backend
+        run: python3 test_plazos.py
+
+      - name: SABOTAJE - el test tiene que poder dar ROJO
+        working-directory: backend
+        run: |
+          set -uo pipefail
+          # Un test que nunca falla no es un test. Se rompe el calculo de dias
+          # habiles a proposito y se exige que el test lo cace.
+          cp plazos.py plazos.ok
+          sed -i 's/if fecha.weekday() >= 5:/if fecha.weekday() >= 7:/' plazos.py
+          # HAY QUE BORRAR EL BYTECODE. Un __pycache__ del modulo bueno hace que
+          # el sabotaje NO se vea. Me paso hoy en brain-env: restaure el fuente,
+          # el md5 coincidia, y el test seguia rojo porque el .pyc saboteado
+          # sobrevivio. Un cache es un instrumento contaminado.
+          rm -rf __pycache__
+          if python3 test_plazos.py > /tmp/sab.txt 2>&1; then
+            echo "ROJO DEL FALSADOR: el test paso con el codigo SABOTEADO."
+            echo "No puede dar rojo, asi que su verde no vale nada."
+            cp plazos.ok plazos.py
+            exit 1
+          fi
+          echo "OK: sabotaje detectado. Rojos hallados:"
+          grep -c ROJO /tmp/sab.txt
+          grep 'ROJO ' /tmp/sab.txt | head -5
+          cp plazos.ok plazos.py
+          rm -rf __pycache__
+          python3 test_plazos.py > /dev/null
+          echo "OK: restaurado y verde de nuevo"
+
+  rls:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: custos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: instalar cliente
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+          python3 -m pip install --quiet 'psycopg[binary]'
+
+      - name: aplicar el esquema
+        env:
+          PGPASSWORD: postgres
+        run: |
+          set -uo pipefail
+          psql -h localhost -U postgres -d custos -v ON_ERROR_STOP=1 -f infra/init.sql
+          echo "--- tablas ---"
+          psql -h localhost -U postgres -d custos -c "\dt"
+          echo "--- politicas RLS ---"
+          psql -h localhost -U postgres -d custos -c "SELECT tablename, policyname FROM pg_policies ORDER BY tablename"
+
+      - name: GUARD - las tablas de inquilino tienen RLS FORZADO
+        env:
+          PGPASSWORD: postgres
+        run: |
+          set -uo pipefail
+          # Puede dar rojo: si alguien agrega una tabla con tenant_id y olvida
+          # el RLS, aca se cae. ENABLE no alcanza: sin FORCE, el DUENO de la
+          # tabla ignora las politicas.
+          N=$(psql -h localhost -U postgres -d custos -tAc "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relrowsecurity AND c.relforcerowsecurity")
+          echo "tablas con RLS forzado: ${N}"
+          if [ "${N}" -lt 5 ]; then
+            echo "ROJO: se esperaban al menos 5 (users, cases, documents, cl_checkpoints, agent_runs)"
+            exit 1
+          fi
+
+      - name: aislamiento entre bufetes
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/custos
+          DATABASE_URL_APP: postgresql://custos_app:CAMBIAR_EN_PRODUCCION@localhost:5432/custos
+        working-directory: backend
+        run: python3 test_rls.py
+
+      - name: SABOTAJE - quitar el RLS de los checkpoints debe dar ROJO
+        env:
+          PGPASSWORD: postgres
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/custos
+          DATABASE_URL_APP: postgresql://custos_app:CAMBIAR_EN_PRODUCCION@localhost:5432/custos
+        working-directory: backend
+        run: |
+          set -uo pipefail
+          # Reproduce el D3 de Fable: los checkpoints sin proteger. Si el test
+          # sigue verde, no estaba midiendo la fuga que dice medir.
+          psql -h localhost -U postgres -d custos -c "ALTER TABLE public.cl_checkpoints DISABLE ROW LEVEL SECURITY"
+          if python3 test_rls.py > /tmp/rls_sab.txt 2>&1; then
+            echo "ROJO DEL FALSADOR: el test paso SIN RLS en cl_checkpoints."
+            echo "O sea que no mide la fuga del D3."
+            exit 1
+          fi
+          echo "OK: la fuga de checkpoints fue detectada:"
+          grep 'ROJO ' /tmp/rls_sab.txt | head -4
