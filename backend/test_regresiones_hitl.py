@@ -14,14 +14,19 @@ entorno; si no, corre la parte que no necesita base y declara NO MEDIDO el
 resto. NO se sustituye por SQLite: SQLite no tiene RLS y el defecto 1 ERA de
 RLS, asi que un verde ahi no probaria nada.
 
-DOS DEFECTOS DE ESTE ARCHIVO, cazados en su primera corrida y arreglados:
+TRES DEFECTOS DE ESTE ARCHIVO, cazados en sus propias corridas y arreglados:
   1. el `redirect_stdout` que captura el log del handler se comia tambien los
      `print` de los checks, asi que los resultados eran invisibles. Un
      instrumento cuya salida no se ve no mide: ahora los checks van al stdout
      REAL guardado al importar, y el buffer solo recibe el log del servidor.
   2. la limpieza hacia DELETE sobre `users` y violaba la FK
-     `aprobaciones_usuario_id_fkey`. Ahora borra el TENANT y deja que el
-     `ON DELETE CASCADE` del esquema haga el resto.
+     `aprobaciones_usuario_id_fkey`: la evidencia apunta al abogado que firmo.
+  3. borrar el TENANT esperando que cascadee tampoco funciona, y eso resulto ser
+     un HALLAZGO del producto, no un bug mio: el trigger
+     `app.aprobacion_inmutable()` rechaza el DELETE incluso cuando llega por
+     `ON DELETE CASCADE`. O sea que un bufete con aprobaciones NO SE PUEDE
+     BORRAR. Se mide como control positivo del guard y los datos sinteticos
+     quedan declarados en vez de forzar el borrado desactivando triggers.
 """
 import contextlib
 import datetime as _dt
@@ -45,6 +50,7 @@ SALIDA = sys.stdout
 VERDES = 0
 ROJOS = 0
 NO_MEDIDO: list[str] = []
+CONSERVADO: list[str] = []
 CANARIO = "CANARIO_REGRESION_" + uuid.uuid4().hex[:8]
 PASSWORD = "regresion-only-" + uuid.uuid4().hex[:8]
 
@@ -204,14 +210,36 @@ def sembrar_postgres(dsn_admin):
     return ids, slugs
 
 
-def limpiar_postgres(dsn_admin, ids):
-    # Se borra el TENANT y el esquema cascadea users, cases y aprobaciones
-    # (ON DELETE CASCADE sobre tenant_id). Borrar `users` directo violaba
-    # `aprobaciones_usuario_id_fkey`: la evidencia apunta al abogado que firmo.
+def cerrar_fixtures(dsn_admin, ids, slugs):
+    """Intenta borrar el bufete sintetico y MIDE lo que pasa.
+
+    No es limpieza a cualquier precio: el trigger `app.aprobacion_inmutable()`
+    rechaza el DELETE de una aprobacion INCLUSO cuando llega por el
+    `ON DELETE CASCADE` de `tenants`. Eso hace que un bufete con aprobaciones
+    no se pueda borrar, y es informacion del producto que vale mas que dejar la
+    base prolija. NO se desactivan triggers ni se eleva el rol para forzarlo:
+    eso seria sabotear el guard que estoy midiendo.
+    """
     import psycopg
-    with psycopg.connect(dsn_admin, autocommit=True) as c:
-        c.execute("DELETE FROM tenants WHERE id = ANY(%s::uuid[])",
-                  ([ids["A"], ids["B"]],))
+    bloqueado = False
+    mensaje = ""
+    try:
+        with psycopg.connect(dsn_admin, autocommit=True) as c:
+            c.execute("DELETE FROM tenants WHERE id = ANY(%s::uuid[])",
+                      ([ids["A"], ids["B"]],))
+    except psycopg.errors.RaiseException as e:
+        bloqueado = True
+        mensaje = str(e).splitlines()[0]
+    ok("GUARD: el trigger de inmutabilidad bloquea el DELETE en cascada",
+       bloqueado, True)
+    if bloqueado:
+        di("       verbatim: " + mensaje)
+        CONSERVADO.append(
+            "bufetes sinteticos " + ", ".join(slugs.values()) + " quedan en la "
+            "base: el trigger de inmutabilidad no permite borrarlos porque "
+            "tienen aprobaciones. Cada corrida usa UUID y slug nuevos, asi que "
+            "el test es repetible; la base acumula fixtures y eso hay que "
+            "resolverlo con una decision de producto, no desactivando el guard")
 
 
 def regresiones_con_postgres(dsn_admin, dsn_app):
@@ -337,7 +365,7 @@ def regresiones_con_postgres(dsn_admin, dsn_app):
         ok("D3 pero el log SI registra la ruta (no quedo mudo)",
            "/buscar" in salida, True)
     finally:
-        limpiar_postgres(dsn_admin, ids)
+        cerrar_fixtures(dsn_admin, ids, slugs)
 
 
 def main() -> int:
@@ -357,6 +385,8 @@ def main() -> int:
     di("\n" + "=" * 66)
     for m in NO_MEDIDO:
         di("NO MEDIDO: " + m)
+    for m in CONSERVADO:
+        di("CONSERVADO: " + m)
     di(f"verdes: {VERDES} | rojos: {ROJOS}")
     di("VERDE" if ROJOS == 0 else "ROJO")
     return 1 if ROJOS else 0
