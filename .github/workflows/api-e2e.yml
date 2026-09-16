@@ -86,6 +86,30 @@ jobs:
       - name: REGRESIONES e2e desde login REAL (sin sesiones inyectadas)
         run: python3 backend/test_regresiones_hitl.py
 
+      - name: DECISION DEL TRIGGER - mide el ANTES y aplica la migracion
+        run: |
+          set -uo pipefail
+          # Esta suite mide el defecto con el esquema base (el rol de la app
+          # borrando un bufete entero), aplica
+          # infra/2026-09-16-cierra-el-borrado-de-un-bufete.sql y vuelve a medir.
+          # El control positivo del paso 1 es lo que hace que su verde no sea
+          # vacio: si el defecto no existiera, ese paso daria rojo.
+          python3 backend/test_borrado_bufete.py
+
+      - name: GUARD - la migracion quedo aplicada de verdad
+        run: |
+          set -uo pipefail
+          # Lee el catalogo, no el log de la suite anterior. Un log puede citar
+          # su propio texto; pg_constraint e information_schema no.
+          psql -h localhost -U postgres -d custos -tAc "SELECT confdeltype FROM pg_constraint WHERE conname='aprobaciones_tenant_id_fkey'"
+          FK=$(psql -h localhost -U postgres -d custos -tAc "SELECT confdeltype FROM pg_constraint WHERE conname='aprobaciones_tenant_id_fkey'")
+          echo "FK aprobaciones->tenants: ${FK} (r = RESTRICT)"
+          test "${FK}" = "r"
+          psql -h localhost -U postgres -d custos -tAc "SELECT string_agg(privilege_type,',' ORDER BY privilege_type) FROM information_schema.role_table_grants WHERE grantee='custos_app' AND table_name='tenants'"
+          P=$(psql -h localhost -U postgres -d custos -tAc "SELECT string_agg(privilege_type,',' ORDER BY privilege_type) FROM information_schema.role_table_grants WHERE grantee='custos_app' AND table_name='tenants'")
+          echo "privilegios de custos_app sobre tenants: ${P}"
+          test "${P}" = "SELECT"
+
       - name: FALSADOR DEL CI - con el defecto de vuelta esto DEBE dar rojo
         run: |
           set -uo pipefail
