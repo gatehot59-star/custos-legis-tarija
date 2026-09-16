@@ -30,6 +30,18 @@ QUE CAMBIA RESPECTO DE LA v1
   7. `computo_detallado()`: el dia por dia, para que el abogado lo verifique en
      diez segundos. Un numero solo no es verificable.
 
+QUE CAMBIO EL 2026-09-16, y es el defecto D4 de la auditoria de integracion:
+  8. EL ARRANQUE del plazo cautelar PENAL. Se buscaba el primer dia HABIL para
+     TODAS las materias, y en un computo de dias CORRIDOS eso se come los
+     inhabiles del principio: con notificacion del viernes el dia 1 caia el
+     lunes. El art. 130 CPP dice "al dia siguiente", no "al dia siguiente
+     HABIL"; el dia siguiente habil es el art. 90.I de la Ley 439 y es CIVIL.
+     Ver el comentario dentro de `computo_detallado`.
+  9. Si el ultimo dia de un computo corrido PENAL cae inhabil, el resultado ya
+     NO se declara CONFIRMADO. Antes se prorrogaba y se avisaba al pie; ahora
+     el estado es NO_MEDIDO, porque el art. 130 se contradice en ese borde y
+     resolverlo es interpretacion juridica, no aritmetica.
+
 QUE ES NO MEDIDO ACA, declarado arriba porque importa:
   1. LA CANTIDAD DE DIAS POR TIPO DE ACTO. Los arts. 252, 261 y 365 del CPC NO
      LOS ABRI. Cada entrada sigue en `confirmado: False`. La REGLA DE COMPUTO si
@@ -39,9 +51,13 @@ QUE ES NO MEDIDO ACA, declarado arriba porque importa:
      "ultimo momento habil del horario de funcionamiento", no una hora).
   3. Feriados departamentales de Tarija mas alla del 15 de abril.
   4. Si una medida cautelar penal en dias corridos que vence en dia inhabil se
-     prorroga. Aca se prorroga, y se declara como supuesto.
-  5. Ley 1173 y el buzon electronico penal: NO LEIDO. El computo penal se queda
-     en el art. 130 puro.
+     prorroga. Se prorroga, PERO desde el 2026-09-16 el estado deja de ser
+     CONFIRMADO: la prorroga viaja como supuesto y el vencimiento como
+     NO_MEDIDO, para que nadie presente un escrito confiando en esa fecha.
+  5. El buzon electronico penal de la Ley 1173: NO LEIDO. Lo que SI se verifico
+     el 2026-09-16 es que **ni la Ley 1173 ni la Ley 1226 modifican el art.
+     130**: las dos enumeran los articulos que tocan y el 130 no esta en ninguna
+     de las dos listas. Asi que el texto del art. 130 usado aca es el vigente.
   6. HAY UN TERCER REGIMEN Y ESTE MODULO NO LO MODELA. El AS 589/2021 del TSJ
      computa una demanda contenciosa administrativa "DE MOMENTO A MOMENTO"
      (art. 264 de la Ley 1340): de la hora de la diligencia a la misma hora del
@@ -49,10 +65,12 @@ QUE ES NO MEDIDO ACA, declarado arriba porque importa:
      MATERIAS_NO_MODELADAS: pasar una de esas como CIVIL da un resultado
      plausible y equivocado, que es la peor clase de resultado.
 
-FUENTES ABIERTAS (2026-09-10)
+FUENTES ABIERTAS (2026-09-10, art. 130 re-verificado el 2026-09-16)
   Ley 439 arts. 89-91 ..... https://www.lexivox.org/norms/BO-L-N439.html
   Ley 1970 art. 130 ....... https://www.lexivox.org/norms/BO-L-1970.html
   Ley 810 (art. 126 LOJ) .. https://www.lexivox.org/norms/BO-L-N810.xhtml
+  Ley 1173 (no toca 130) .. https://www.lexivox.org/norms/BO-L-N1173.html
+  Ley 1226 (no toca 130) .. https://www.lexivox.org/norms/BO-L-N1226.html
 """
 from __future__ import annotations
 
@@ -371,14 +389,16 @@ def computo_detallado(notificacion: _dt.date, dias: int, materia: Materia, *,
     """Calcula el vencimiento con la regla que corresponde a la materia.
 
     Dies a quo: art. 90.I Ley 439 y art. 130 CPP. El plazo arranca el dia
-    SIGUIENTE. En civil, el dia siguiente HABIL. Plazos comunes: desde la
-    ULTIMA notificacion (art. 90.I in fine y art. 130 in fine).
+    SIGUIENTE. En civil, el dia siguiente HABIL. En penal con computo CORRIDO,
+    el dia siguiente CALENDARIO. Plazos comunes: desde la ULTIMA notificacion
+    (art. 90.I in fine y art. 130 in fine).
     """
     if not isinstance(materia, Materia):
         raise TypeError("materia es obligatoria: Materia.CIVIL o Materia.PENAL")
 
     modo, fundamento = _modo_y_fundamento(materia, dias, medida_cautelar)
     hora, aviso_hora = _hora_vencimiento(materia)
+    prorroga_penal_incierta = False
     adv: list[str] = []
     if aviso_hora:
         adv.append(aviso_hora)
@@ -418,14 +438,45 @@ def computo_detallado(notificacion: _dt.date, dias: int, materia: Materia, *,
     detalle: list[dict] = []
     cursor = base
     inicio: _dt.date | None = None
-    for _ in range(400):
-        cursor += _dt.timedelta(days=1)
-        marca = _marca(cursor, tarija=tarija, extra=extra, calendario=calendario)
-        if marca == "habil":
-            inicio = cursor
-            break
-        detalle.append({"fecha": cursor, "marca": marca + "  <- antes del arranque",
-                        "cuenta": False, "n": None})
+    if materia is Materia.PENAL and modo == "corridos":
+        # DEFECTO CORREGIDO. El arranque se buscaba HABIL para TODAS las
+        # materias, y en un plazo cautelar penal -- que va en dias CORRIDOS --
+        # eso se come los inhabiles del principio: con notificacion del viernes
+        # el dia 1 caia el lunes en vez del sabado.
+        #
+        # Texto vigente del art. 130 CPP (Ley 1970), verificado en tres fuentes
+        # independientes y NO modificado por la Ley 1173 ni por la Ley 1226 (las
+        # dos enumeran los articulos que tocan y el 130 no esta):
+        #
+        #   "Los plazos determinados por dias comenzaran a correr al dia
+        #    siguiente de practicada la notificacion y venceran a las
+        #    veinticuatro horas del ultimo dia habil senalado. Al efecto, se
+        #    computara solo los dias habiles, salvo que la ley disponga
+        #    expresamente lo contrario o que se refiera a medidas cautelares,
+        #    caso en el cual se computaran dias corridos."
+        #
+        # Dice "al dia siguiente", NO "al dia siguiente HABIL". El dia siguiente
+        # habil es el art. 90.I de la Ley 439, que es CIVIL.
+        #
+        # POR QUE LA CONDICION EXIGE PENAL Y NO SOLO "corridos": un plazo CIVIL
+        # de mas de 15 dias tambien se computa corrido (art. 90.II Ley 439),
+        # pero su arranque sigue gobernado por el art. 90.I, o sea el dia
+        # siguiente HABIL. La primera version de este parche condicionaba solo
+        # por `modo` y rompio dos aserciones ARRANQUE-HABIL de test_plazos.py
+        # que ya existian y tenian razon. "Corridos" no implica "arranque
+        # calendario": eso es del art. 130 CPP, y el art. 130 CPP es penal.
+        inicio = base + _dt.timedelta(days=1)
+    else:
+        for _ in range(400):
+            cursor += _dt.timedelta(days=1)
+            marca = _marca(cursor, tarija=tarija, extra=extra,
+                           calendario=calendario)
+            if marca == "habil":
+                inicio = cursor
+                break
+            detalle.append({"fecha": cursor,
+                            "marca": marca + "  <- antes del arranque",
+                            "cuenta": False, "n": None})
     if inicio is None:
         return Computo(estado=NO_MEDIDO, vencimiento=None, modo=modo,
                        fundamento=fundamento, materia=materia, dias=dias,
@@ -474,9 +525,19 @@ def computo_detallado(notificacion: _dt.date, dias: int, materia: Materia, *,
         motivo = ("art. 90.III Ley 439: el ultimo dia es inhabil, el plazo queda "
                   "prorrogado al primer dia habil siguiente")
         if materia is Materia.PENAL:
-            motivo = ("SUPUESTO DECLARADO (no medido): ultimo dia inhabil en "
-                      "computo corrido penal, se prorroga al primer habil")
+            # El art. 130 CPP choca CONSIGO MISMO en este borde: manda computar
+            # "dias corridos" para cautelares y en la misma oracion dice que
+            # vencen "a las veinticuatro horas del ultimo dia HABIL senalado".
+            # Resolver esa tension es interpretacion juridica, no aritmetica, y
+            # no la firmo yo. Asi que el vencimiento deja de declararse
+            # CONFIRMADO: se devuelve incertidumbre explicita.
+            motivo = ("VENCIMIENTO NO CONFIRMADO: el ultimo dia del computo "
+                      "corrido cae inhabil y el art. 130 CPP es contradictorio "
+                      "en ese borde ('dias corridos' vs 'ultimo dia habil'). La "
+                      "prorroga de abajo es UN SUPUESTO, no la norma medida: "
+                      "confirmar con abogado antes de presentar")
             adv.append(motivo)
+            prorroga_penal_incierta = True
         while not es_habil(venc, tarija=tarija, extra=extra, calendario=calendario):
             venc += _dt.timedelta(days=1)
             detalle.append({"fecha": venc,
@@ -487,7 +548,8 @@ def computo_detallado(notificacion: _dt.date, dias: int, materia: Materia, *,
         if materia is Materia.CIVIL:
             adv.append(motivo)
 
-    estado = NO_MEDIDO if sin_cobertura else CONFIRMADO
+    estado = (NO_MEDIDO if (sin_cobertura or prorroga_penal_incierta)
+              else CONFIRMADO)
     if estado is NO_MEDIDO:
         adv.append("VENCIMIENTO NO CONFIRMADO: falta calendario judicial. "
                    "La fecha de abajo es orientativa y NO debe usarse para "

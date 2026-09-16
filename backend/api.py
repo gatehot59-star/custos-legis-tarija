@@ -25,24 +25,34 @@ LOS TRES CONTROLES DUROS, y cada uno con su falsador en CI
      bufetes": sin tenant se LEVANTA `SinTenant`, no se amplia el WHERE.
   2. NINGUNA accion externa sale sin un evento de aprobacion por matricula
      registrado ANTES, sobre el sha256 EXACTO del contenido que se va a ejecutar.
-     Aprobar un borrador y ejecutar otro es la fuga obvia y esta cerrada.
+     Aprobar un borrador y ejecutar otro es la fuga obvia y esta cerrada. Y
+     desde el 2026-09-16 tampoco sale si la ULTIMA decision es un rechazo, ni
+     si la aprobacion pertenece a OTRO caso o a NINGUN caso: ver
+     `exigir_aprobacion`.
   3. La jurisprudencia NO se sirve como texto: pasa por la compuerta de
      `anonimizador.py`. La normativa si, porque no tiene partes.
 
 --------------------------------------------------------------------------------
 QUE ES NO MEDIDO
 --------------------------------------------------------------------------------
-  1. `PostgresAlmacen` no se ejecuto aca (`psycopg` no instalado). El SQL es el
-     mismo que corre verde en `test_rls.py` contra PostgreSQL 16 real, pero esa
-     clase en particular NO fue ejecutada.
-  2. El corpus esta CERRADO al publico desde 2026-09-10 06:29 UTC. `/buscar`
+  1. El corpus esta CERRADO al publico desde 2026-09-10 06:29 UTC. `/buscar`
      contra el corpus real no se pudo medir; se mide contra un doble que
      devuelve la forma documentada del contrato.
-  3. TLS, rate limiting y rotacion de tokens: no estan. Van en nginx, no aca.
-  4. Los tokens viven en memoria del proceso: reiniciar el servicio corta todas
+  2. TLS, rate limiting y rotacion de tokens: no estan. Van en nginx, no aca.
+  3. Los tokens viven en memoria del proceso: reiniciar el servicio corta todas
      las sesiones. Aceptable para un piloto, NO para produccion con varios
      workers. Declarado.
-  5. No hay paginacion en `/casos`. Con 20 expedientes no importa; con 2.000 si.
+  4. No hay paginacion en `/casos`. Con 20 expedientes no importa; con 2.000 si.
+  5. El CONTRATO de una accion externa SIN caso. Hoy el gate exige que la
+     aprobacion tampoco tenga caso, que es el lado seguro, pero nadie definio si
+     una accion sin expediente deberia existir. Es una decision de producto.
+
+LO QUE DEJO DE SER NO MEDIDO el 2026-09-16: `PostgresAlmacen` SI se ejecuto,
+contra PostgreSQL real con el rol `custos_app` sin superusuario y sin BYPASSRLS.
+Ahi se midieron los cuatro defectos que corrige este archivo y `almacen.py`. Y
+PostgreSQL **16** quedo cubierto por el workflow `api-e2e.yml`, que corrio verde
+contra `postgres:16`. Dejarlos escritos como pendientes seria un pendiente falso,
+y un pendiente falso cuesta lo mismo que uno real.
 
 --------------------------------------------------------------------------------
 DOS DEFECTOS DE OPERACION QUE APARECIERON AL CORRER EL `__main__`
@@ -77,7 +87,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import anonimizador as AN
 import calendario_judicial as CAL
 import plazos as PZ
-from almacen import Almacen, NoAutorizado, SinTenant, Usuario, verificar_password
+from almacen import (Almacen, BufeteRequerido, NoAutorizado, SinTenant,
+                     Usuario, verificar_password)
 
 VERSION = "0.1.0"
 SESION_TTL_S = 8 * 3600           # una jornada de trabajo
@@ -184,6 +195,18 @@ class GateBloqueado(RuntimeError):
     pass
 
 
+def _clave_decision(ev: dict) -> tuple[str, str]:
+    """Orden determinista de decisiones: mas nueva primero.
+
+    `creado_en` en PostgreSQL y `ts` en SQLite son ISO-8601, que ordena bien
+    como texto. El `id` desempata cuando dos decisiones comparten timestamp
+    exacto: sin ese segundo criterio el resultado dependeria del orden de
+    llegada, y un gate que depende de eso no es un gate.
+    """
+    ts = ev.get("creado_en") or ev.get("ts") or ""
+    return (str(ts), str(ev.get("id") or ""))
+
+
 def exigir_aprobacion(almacen: Almacen, tenant_id: str, tipo: str,
                       contenido: str, case_id: str | None) -> dict:
     """Devuelve la aprobacion valida o LEVANTA. No hay tercera opcion.
@@ -193,15 +216,62 @@ def exigir_aprobacion(almacen: Almacen, tenant_id: str, tipo: str,
     esta cerrada por el hash, no por confianza.
     """
     h = sha256(contenido)
-    for ev in almacen.aprobaciones(tenant_id, case_id):
-        if (ev.get("tipo") == tipo and ev.get("sha256_entrada") == h
-                and ev.get("decision") == "aprobado" and ev.get("matricula")):
-            return ev
-    raise GateBloqueado(
-        f"accion '{tipo}' BLOQUEADA: no hay aprobacion de un abogado con "
-        f"matricula sobre este contenido exacto (sha256 {h[:12]}...). "
-        "Aprobar un borrador y ejecutar otro no cuenta: el hash tiene que "
-        "coincidir. Fundamento: Ley 387 arts. 6 y 32.II")
+    # DEFECTO CORREGIDO. Antes recorria TODO el historial buscando cualquier
+    # 'aprobado' y devolvia el primero que encontraba, asi que SALTABA un
+    # rechazo POSTERIOR sobre el mismo contenido: el abogado que se arrepiente
+    # no podia frenar nada. Medido: aprobar -> rechazar -> accion daba 200.
+    #
+    # Ahora se resuelve la ULTIMA decision aplicable por (tenant, caso, tipo,
+    # hash) con orden determinista declarado ACA, sin depender del ORDER BY del
+    # almacen: timestamp DESC y, ante empate exacto, id DESC.
+    #
+    # REPARO DE SOL, MEDIDO Y CONFIRMADO EN PARTE. Su hallazgo estatico: el
+    # almacen filtra por caso solo si `case_id` es truthy, asi que con None
+    # devuelve TODAS las aprobaciones del bufete, y este filtro no volvia a
+    # exigir igualdad de caso.
+    #
+    # Lo medi por HTTP contra el gate real (medir_reparo_case_id.py):
+    #   aprobacion atada al caso 1, accion en el caso 1  -> 200  correcto
+    #   aprobacion atada al caso 1, accion en el caso 2  -> 403  NO heredaba
+    #   aprobacion atada al caso 1, accion SIN caso      -> 200  HEREDABA
+    #
+    # O sea: no habia fuga entre casos, pero una accion que NO declara caso se
+    # colgaba de una aprobacion atada a un expediente concreto. El abogado firmo
+    # "para este caso" y el gate lo leia como "para cualquier cosa sin caso".
+    # Ahora el caso es parte de la identidad de la decision, y None solo matchea
+    # None: la comparacion es explicita en las dos puntas para que un id vacio no
+    # se confunda con "cualquiera".
+    def _mismo_caso(ev: dict) -> bool:
+        propio = ev.get("case_id")
+        if case_id is None or propio is None:
+            return case_id is None and propio is None
+        return str(propio) == str(case_id)
+
+    aplicables = [ev for ev in almacen.aprobaciones(tenant_id, case_id)
+                  if ev.get("tipo") == tipo and ev.get("sha256_entrada") == h
+                  and _mismo_caso(ev)]
+    if not aplicables:
+        raise GateBloqueado(
+            f"accion '{tipo}' BLOQUEADA: no hay NINGUNA decision de un abogado "
+            f"con matricula sobre este contenido exacto (sha256 {h[:12]}...) "
+            f"para este caso (case_id={case_id}). Aprobar un borrador y "
+            "ejecutar otro no cuenta, y una aprobacion de otro expediente "
+            "tampoco: el hash Y el caso tienen que coincidir. Fundamento: "
+            "Ley 387 arts. 6 y 32.II")
+    aplicables.sort(key=_clave_decision, reverse=True)
+    ultima = aplicables[0]
+    if ultima.get("decision") != "aprobado":
+        raise GateBloqueado(
+            f"accion '{tipo}' BLOQUEADA: la ULTIMA decision sobre este "
+            f"contenido exacto (sha256 {h[:12]}...) es un RECHAZO. Un rechazo "
+            "posterior revoca la aprobacion anterior; para volver a habilitar "
+            "hay que registrar una aprobacion nueva. Fundamento: Ley 387 "
+            "arts. 6 y 32.II")
+    if not ultima.get("matricula"):
+        raise GateBloqueado(
+            f"accion '{tipo}' BLOQUEADA: la aprobacion vigente no tiene "
+            "matricula de abogado. Fundamento: Ley 387 arts. 6 y 32.II")
+    return ultima
 
 
 # ---------------------------------------------------------------------------
@@ -229,16 +299,31 @@ class App:
             "calendario_judicial": CAL.cobertura("Tarija"),
             "acciones_externas_bloqueadas_sin_matricula": sorted(ACCIONES_EXTERNAS),
             "no_medido": [
-                "PostgresAlmacen no ejecutado en el taller (sin psycopg)",
+                # Se corrigio el 2026-09-16: antes decia que PostgresAlmacen no
+                # se habia ejecutado, y despues que PostgreSQL 16 no estaba
+                # medido. Las dos cosas ya son falsas: dejarlas aca seria un
+                # pendiente FALSO, que cuesta lo mismo que uno real.
                 "corpus cerrado al publico: /buscar no medido contra el real",
                 "tokens en memoria del proceso: un reinicio corta las sesiones",
+                "TLS, rate limiting y rotacion de tokens: van en nginx, no aca",
+                "el contrato de una accion externa SIN caso: el gate exige que "
+                "la aprobacion tampoco tenga caso (lado seguro), pero nadie "
+                "definio si esa accion deberia existir",
             ],
         }
 
     def abrir_sesion(self, cuerpo: dict) -> dict:
         email = (cuerpo.get("email") or "").strip()
         pw = cuerpo.get("password") or ""
-        par = self.almacen.usuario_por_email(email) if email else None
+        # El bufete es parte de la identidad, no un extra: el esquema admite el
+        # mismo email en dos bufetes. Se acepta `bufete` o su alias `slug`.
+        bufete = (cuerpo.get("bufete") or cuerpo.get("slug") or "").strip() or None
+        try:
+            par = self.almacen.usuario_por_email(email, bufete) if email else None
+        except BufeteRequerido as e:
+            # 401 y no 400: el mensaje pide el dato que falta SIN decir si ese
+            # email existe en algun bufete.
+            raise NoAutorizado(str(e)) from e
         # Se verifica el password SIEMPRE, incluso si el usuario no existe, para
         # que el tiempo de respuesta no diga si el email esta registrado.
         guardado = par[1] if par else hash_imposible()
@@ -419,13 +504,29 @@ def construir_handler(app: App):
         protocol_version = "HTTP/1.1"
         server_version = f"custos-legis/{VERSION}"
 
+        def _registrar(self, codigo) -> None:
+            # Lista BLANCA de campos. Todo lo que no este aca no se imprime.
+            ruta = urllib.parse.urlparse(getattr(self, "path", "") or "").path
+            metodo = getattr(self, "command", "-") or "-"
+            print(f"{self.address_string()} {metodo} {ruta} {codigo}")
+
+        def log_request(self, code="-", size="-"):  # noqa: A003
+            # DEFECTO CORREGIDO. La base llama log_message('"%s" %s %s',
+            # self.requestline, ...), o sea que la linea HTTP COMPLETA -- con la
+            # query string -- volvia a entrar por los args y el `fmt % args` la
+            # reinsertaba, aunque la ruta estuviera saneada. Medido: el canario
+            # aparecia en stdout. Se sobrescribe el punto de entrada real.
+            self._registrar(code)
+
         def log_message(self, fmt, *args):  # noqa: A003
-            # NO se loguea la query string: puede traer el texto de una busqueda
-            # juridica, y eso revela la estrategia de un caso. Misma regla que
-            # el `log_format corpus_sin_query` de nginx.
-            ruta = urllib.parse.urlparse(self.path).path
-            print(f"{self.address_string()} {self.command} {ruta} "
-                  f"{fmt % args if args else ''}".strip())
+            # NO se formatea NADA del caller: ni fmt ni args. Una busqueda
+            # juridica en el log revela la estrategia de un caso, y un token o
+            # una password ahi son una fuga permanente.
+            self._registrar("-")
+
+        def log_error(self, fmt, *args):  # noqa: A003
+            # Los errores tambien traen la requestline. Mismo tratamiento.
+            self._registrar("error")
 
         def _responder(self, codigo: int, cuerpo: dict) -> None:
             b = json.dumps(cuerpo, ensure_ascii=False, default=str).encode("utf-8")

@@ -33,6 +33,13 @@ name: tests
 #   E5. (2026-09-10) Dos falsadores nuevos vivieron un rato SOLO en mi historial
 #       de shell: los corri a mano, dieron rojo, y no los cablee. Un control que
 #       nadie corre no es un control, es una anecdota. Estan abajo como 7 y 8.
+#   E6. (2026-09-16) El E4 volvio, y esta vez NO por un SyntaxError sino por
+#       DERIVA DEL FUENTE: el arreglo del art. 130 CPP reindento el bloque del
+#       arranque y agrego una condicion al estado, y los falsadores 3 y 5
+#       dejaron de matchear. Aplicaban cero cambios, el test daba verde, y el
+#       paso acusaba al TEST cuando el roto era el SABOTAJE. Ahora falsear()
+#       exige que el fuente haya cambiado (cmp de bytes) antes de creerle
+#       cualquier cosa al veredicto del test.
 #
 # TRES VECES EN DOS SESIONES un control acierta el veredicto por la razon
 # equivocada (E1, los tests de vacacion judicial, y los de POR-DEPARTAMENTO).
@@ -121,7 +128,28 @@ jobs:
             # md5 coincidia, y el test seguia rojo porque el .pyc saboteado
             # sobrevivio. Un cache es un instrumento contaminado.
             rm -rf __pycache__
-            python3 -c "$py"
+            if ! python3 -c "$py"; then
+              echo "ROJO DEL FALSADOR [${nombre}]: el script de sabotaje EXPLOTO."
+              cp plazos.ok plazos.py
+              cp calendario_judicial.ok calendario_judicial.py
+              rm -rf __pycache__
+              return 1
+            fi
+            # E6. (2026-09-16) EL SABOTAJE TIENE QUE HABER TOCADO EL FUENTE.
+            #     Un replace con el patron obsoleto no cambia NADA, el test da
+            #     verde, y el paso acusa al test ("no puede dar rojo") cuando el
+            #     roto es el sabotaje. Me paso hoy: el arreglo del art. 130 CPP
+            #     reindento el bloque del arranque y agrego una condicion al
+            #     estado, y los falsadores 3 y 5 dejaron de matchear. Es el E4
+            #     otra vez, ahora por DERIVA DEL FUENTE en vez de SyntaxError.
+            #     Cuenta ESTRUCTURA: compara los bytes del archivo.
+            if cmp -s plazos.py plazos.ok && cmp -s calendario_judicial.py calendario_judicial.ok; then
+              echo "ROJO DEL FALSADOR [${nombre}]: el SABOTAJE NO MODIFICO NINGUN FUENTE."
+              echo "  El patron del replace quedo obsoleto: su verde no vale nada,"
+              echo "  y el test NO es el acusado."
+              rm -rf __pycache__
+              return 1
+            fi
             local RC=0
             python3 "$test" > /tmp/sab.txt 2>&1 || RC=$?
             cp plazos.ok plazos.py
@@ -170,9 +198,12 @@ jobs:
           # 3. El plazo arranca en base+1 sin buscar el dia HABIL (art. 90.I).
           #    Solo se nota en computo corrido: en habiles el sabado no cuenta
           #    igual, asi que el test de habiles NO discriminaba.
+          #    OJO (E6): este patron se rompio cuando el arreglo del art. 130
+          #    metio el bucle dentro de un `else`. La indentacion es parte del
+          #    patron, y un patron obsoleto sabotea CERO.
           falsear "arranque-sin-buscar-habil" "ARRANQUE-HABIL" "test_plazos.py" '
           s=open("plazos.py").read()
-          s=s.replace("        if marca == \"habil\":\n            inicio = cursor\n            break","        inicio = cursor\n        break")
+          s=s.replace("            if marca == \"habil\":\n                inicio = cursor\n                break","            inicio = cursor\n            break")
           open("plazos.py","w").write(s)' || FALLOS=$((FALLOS+1))
 
           # 4. La hora de vencimiento penal (24:00, art. 130) se iguala a la
@@ -185,9 +216,11 @@ jobs:
           # 5. El modulo declara CONFIRMADO sin circular del Tribunal
           #    Departamental. Es la mentira mas peligrosa: una fecha con cara de
           #    cierta sobre un calendario que nadie cargo.
+          #    (E6) El estado ahora tambien depende de prorroga_penal_incierta:
+          #    el patron de una sola linea quedo obsoleto.
           falsear "confirmado-sin-calendario" "SIN-CALENDARIO-NO-MEDIDO" "test_plazos.py" '
           s=open("plazos.py").read()
-          s=s.replace("    estado = NO_MEDIDO if sin_cobertura else CONFIRMADO","    estado = CONFIRMADO")
+          s=s.replace("    estado = (NO_MEDIDO if (sin_cobertura or prorroga_penal_incierta)\n              else CONFIRMADO)","    estado = CONFIRMADO")
           open("plazos.py","w").write(s)' || FALLOS=$((FALLOS+1))
 
           # ---- CALENDARIO ---------------------------------------------------
@@ -316,6 +349,14 @@ jobs:
             cp anonimizador.ok anonimizador.py
             rm -rf __pycache__
             python3 -c "$py"
+            # E6: el sabotaje tiene que haber TOCADO el fuente (ver el job plazos).
+            if cmp -s anonimizador.py anonimizador.ok; then
+              echo "ROJO DEL FALSADOR [${nombre}]: el SABOTAJE NO MODIFICO EL FUENTE."
+              echo "  El patron del replace quedo obsoleto: esto es exactamente el E4,"
+              echo "  y esta vez se caza sin depender del veredicto del test."
+              rm -rf __pycache__
+              return 1
+            fi
             local RC=0
             python3 test_anonimizador.py > /tmp/sab.txt 2>&1 || RC=$?
             cp anonimizador.ok anonimizador.py

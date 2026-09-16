@@ -22,10 +22,18 @@ Asi que:
     niega IGUAL si `CUSTOS_ENTORNO=produccion` aunque le pasen el flag. Los dos
     caminos tienen su falsador.
 
-NO MEDIDO: `PostgresAlmacen` no se ejecuto en este taller, porque `psycopg` no
-esta instalado y no hay red para instalarlo. Su SQL es el mismo que ya corre
-verde en `test_rls.py`, pero **esta clase en particular no fue ejecutada**. Va
-declarado y no disimulado.
+ESTADO DE `PostgresAlmacen`, corregido el 2026-09-16: la nota anterior decia que
+esta clase NO se habia ejecutado nunca. Ya no es cierto. Corrio contra
+PostgreSQL real en brain-env con el rol `custos_app` sin superusuario y sin
+BYPASSRLS, y ahi se midio el defecto del login: `usuario_por_email` leia
+`public.users` SIN `app.set_tenant` contra una politica con FORCE ROW LEVEL
+SECURITY, o sea CERO filas y 401 con credenciales validas. Evidencia:
+`docs/auditorias/2026-09-16-integracion-brain-env/` y
+`docs/auditorias/2026-09-16-pr-cuatro-defectos/`.
+
+NO MEDIDO todavia: PostgreSQL 16 (las corridas del taller fueron sobre 17.11
+porque el 16 embebido no traia las extensiones). Esa version la cubre el
+workflow `api-e2e.yml`.
 """
 from __future__ import annotations
 
@@ -78,8 +86,19 @@ class Usuario:
     matricula: str | None
 
 
+class BufeteRequerido(ValueError):
+    """El login no tiene respuesta unica sin el bufete.
+
+    `UNIQUE (tenant_id, email)` es compuesto a proposito: el mismo email puede
+    existir en dos bufetes. Preguntar por email suelto no es una consulta con
+    una respuesta: es una consulta con varias, y elegir una arbitrariamente es
+    el defecto, no la solucion.
+    """
+
+
 class Almacen(Protocol):
-    def usuario_por_email(self, email: str) -> tuple[Usuario, str] | None: ...
+    def usuario_por_email(self, email: str, bufete: str | None = None
+                          ) -> tuple[Usuario, str] | None: ...
     def casos(self, tenant_id: str) -> list[dict]: ...
     def caso(self, tenant_id: str, case_id: str) -> dict | None: ...
     def crear_caso(self, tenant_id: str, datos: dict) -> dict: ...
@@ -139,9 +158,26 @@ class SqliteAlmacen:
         self.con.commit()
 
     # -- lectura -----------------------------------------------------------
-    def usuario_por_email(self, email: str) -> tuple[Usuario, str] | None:
-        r = self.con.execute(
-            "SELECT * FROM users WHERE email = ?", (email.lower(),)).fetchone()
+    def usuario_por_email(self, email: str, bufete: str | None = None
+                          ) -> tuple[Usuario, str] | None:
+        # Este almacen NO tiene RLS y es de prueba. Acepta `bufete` para tener
+        # la MISMA firma que produccion. Si no viene y el email existe en mas de
+        # un bufete, se niega en vez de devolver una fila arbitraria: ese
+        # `fetchone()` silencioso era el defecto latente del contrato viejo.
+        if bufete:
+            r = self.con.execute(
+                "SELECT u.* FROM users u JOIN tenants t ON t.id = u.tenant_id"
+                " WHERE u.email = ? AND lower(t.slug) = lower(?)",
+                (email.lower(), bufete)).fetchone()
+        else:
+            filas = self.con.execute(
+                "SELECT * FROM users WHERE email = ?",
+                (email.lower(),)).fetchall()
+            if len(filas) > 1:
+                raise BufeteRequerido(
+                    "ese email existe en mas de un bufete: el login necesita el "
+                    "bufete para tener una respuesta unica")
+            r = filas[0] if filas else None
         if not r:
             return None
         return (Usuario(id=r["id"], tenant_id=r["tenant_id"], email=r["email"],
@@ -240,7 +276,7 @@ class SqliteAlmacen:
 
 
 # ---------------------------------------------------------------------------
-# POSTGRES: produccion. NO EJECUTADO en este taller (ver docstring del modulo).
+# POSTGRES: produccion. Ejecutado contra PostgreSQL real desde el 2026-09-16.
 # ---------------------------------------------------------------------------
 
 
@@ -252,6 +288,9 @@ class PostgresAlmacen:
     datos. El `set_config(..., TRUE)` es local a la transaccion: sin eso el
     tenant se filtra al siguiente request que reuse la conexion del pool. Eso
     esta en `infra/init.sql` y probado en `test_rls.py`.
+
+    Y `usuario_por_email` NO es la excepcion a esa regla, aunque antes lo era.
+    Ver el comentario del metodo: esa excepcion era el defecto.
     """
 
     dsn: str
@@ -272,18 +311,44 @@ class PostgresAlmacen:
                     return []
                 return list(cur.fetchall())
 
-    def usuario_por_email(self, email: str) -> tuple[Usuario, str] | None:
-        # Login: es la UNICA consulta sin tenant, porque el tenant se descubre
-        # aca. Lee solo estas columnas y solo de usuarios activos.
+    def usuario_por_email(self, email: str, bufete: str | None = None
+                          ) -> tuple[Usuario, str] | None:
+        # DEFECTO CORREGIDO. Antes leia public.users SIN app.set_tenant contra
+        # una politica con FORCE ROW LEVEL SECURITY: la consulta devolvia CERO
+        # filas y el login rechazaba credenciales VALIDAS con 401. Medido: con
+        # el rol real 401, con BYPASSRLS 200 (falsador_login.py).
+        #
+        # El arreglo NO es BYPASSRLS, ni superusuario, ni desactivar RLS, ni
+        # ampliar la politica: es resolver el bufete PRIMERO contra
+        # public.tenants -- que por diseno no tiene RLS, "la administra el
+        # servicio, no un inquilino" -- y recien despues leer public.users
+        # DENTRO de ese tenant, con la misma politica activa y por la via
+        # normal `_en_tenant`. El privilegio no cambia.
+        #
+        # De paso cierra la ambiguedad del esquema: UNIQUE (tenant_id, email)
+        # permite el mismo email en dos bufetes.
+        if not bufete:
+            raise BufeteRequerido(
+                "el login necesita el bufete: el mismo email puede existir en "
+                "dos bufetes (UNIQUE (tenant_id, email)), asi que sin bufete la "
+                "consulta no tiene respuesta unica. No se resuelve con "
+                "BYPASSRLS ni ampliando el WHERE")
         with self._con() as con:
             with con.cursor() as cur:
                 cur.execute(
-                    "SELECT id, tenant_id, email, password_hash, nombre_completo,"
-                    " rol, matricula_cab FROM public.users"
-                    " WHERE lower(email) = lower(%s) AND activo = TRUE", (email,))
-                r = cur.fetchone()
-        if not r:
+                    "SELECT id FROM public.tenants"
+                    " WHERE lower(slug) = lower(%s)", (bufete,))
+                t = cur.fetchone()
+        if not t:
             return None
+        filas = self._en_tenant(
+            str(t["id"]),
+            "SELECT id, tenant_id, email, password_hash, nombre_completo,"
+            " rol, matricula_cab FROM public.users"
+            " WHERE lower(email) = lower(%s) AND activo = TRUE", (email,))
+        if not filas:
+            return None
+        r = filas[0]
         return (Usuario(id=str(r["id"]), tenant_id=str(r["tenant_id"]),
                         email=r["email"], nombre=r["nombre_completo"],
                         rol=r["rol"], matricula=r["matricula_cab"]),

@@ -1,0 +1,256 @@
+# API + REGRESIONES EXTREMO A EXTREMO, CONTRA POSTGRESQL 16 REAL
+#
+# POR QUE UN ARCHIVO NUEVO Y NO UNA EDICION DE tests.yml: el workflow existente
+# tiene 501 lineas y tres jobs que hoy pasan. Un cambio delicado de CI que se
+# mete en medio puede romper lo que ya funciona y eso se descubre despues del
+# merge. Un archivo aparte no puede romper nada: si este falla, falla solo.
+#
+# QUE HUECO CIERRA: la auditoria del 15-sep midio que el CI pasaba VERDE sin
+# ejecutar `test_api.py`, sin `guard_esquema.py` y sin tocar `PostgresAlmacen`.
+# O sea que el login podia estar roto -- y lo estaba -- con el CI en verde. Un
+# CI que no puede dar rojo por el defecto que hay en el arbol no es un CI.
+#
+# POSTGRESQL 16 A PROPOSITO: la corrida de brain-env uso 17.11 porque el 16
+# embebido no traia las extensiones. 17 no es equivalente a 16 y no se declara
+# como tal: la version del CI es la que manda.
+name: api-e2e
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "backend/**"
+      - "infra/**"
+      - ".github/workflows/api-e2e.yml"
+  push:
+    paths:
+      - "backend/**"
+      - "infra/**"
+      - ".github/workflows/api-e2e.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  api-e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: custos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/custos
+      DATABASE_URL_APP: postgresql://custos_app:CAMBIAR_EN_PRODUCCION@localhost:5432/custos
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: REGRESION - el falsador rechaza errores de preparacion
+        run: python3 backend/test_falsador_caso.py
+
+      - name: instalar cliente y driver
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+          python3 -m pip install --quiet 'psycopg[binary]'
+
+      - name: version del motor (queda escrita, no se asume)
+        run: psql -h localhost -U postgres -d custos -tAc "SELECT version()"
+
+      - name: aplicar el esquema
+        run: |
+          set -uo pipefail
+          psql -h localhost -U postgres -d custos -v ON_ERROR_STOP=1 -f infra/init.sql
+
+      - name: CONTROL DEL INSTRUMENTO - el rol de la app no tiene atajos
+        run: |
+          set -uo pipefail
+          # Si custos_app fuera superusuario o tuviera BYPASSRLS, TODO lo que
+          # sigue seria un verde vacio. Se mide antes de creer en nada.
+          psql -h localhost -U postgres -d custos -tAc "SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname='custos_app'"
+          N=$(psql -h localhost -U postgres -d custos -tAc "SELECT count(*) FROM pg_roles WHERE rolname='custos_app' AND (rolsuper OR rolbypassrls)")
+          echo "roles con atajo: ${N}"
+          test "${N}" = "0"
+
+      - name: guard del esquema
+        run: python3 backend/guard_esquema.py
+
+      - name: suite de API
+        run: python3 backend/test_api.py
+
+      - name: RLS con PostgresAlmacen real
+        run: python3 backend/test_rls.py
+
+      - name: REGRESIONES e2e desde login REAL (sin sesiones inyectadas)
+        run: python3 backend/test_regresiones_hitl.py
+
+      - name: DECISION DEL TRIGGER - mide el ANTES y aplica la migracion
+        run: |
+          set -uo pipefail
+          # Esta suite mide el defecto con el esquema base (el rol de la app
+          # borrando un bufete entero), aplica
+          # infra/2026-09-16-cierra-el-borrado-de-un-bufete.sql y vuelve a medir.
+          # El control positivo del paso 1 es lo que hace que su verde no sea
+          # vacio: si el defecto no existiera, ese paso daria rojo.
+          python3 backend/test_borrado_bufete.py
+
+      - name: GUARD - la migracion quedo aplicada de verdad
+        run: |
+          set -uo pipefail
+          # Lee el catalogo, no el log de la suite anterior. Un log puede citar
+          # su propio texto; pg_constraint e information_schema no.
+          psql -h localhost -U postgres -d custos -tAc "SELECT confdeltype FROM pg_constraint WHERE conname='aprobaciones_tenant_id_fkey'"
+          FK=$(psql -h localhost -U postgres -d custos -tAc "SELECT confdeltype FROM pg_constraint WHERE conname='aprobaciones_tenant_id_fkey'")
+          echo "FK aprobaciones->tenants: ${FK} (r = RESTRICT)"
+          test "${FK}" = "r"
+          psql -h localhost -U postgres -d custos -tAc "SELECT string_agg(privilege_type,',' ORDER BY privilege_type) FROM information_schema.role_table_grants WHERE grantee='custos_app' AND table_name='tenants'"
+          P=$(psql -h localhost -U postgres -d custos -tAc "SELECT string_agg(privilege_type,',' ORDER BY privilege_type) FROM information_schema.role_table_grants WHERE grantee='custos_app' AND table_name='tenants'")
+          echo "privilegios de custos_app sobre tenants: ${P}"
+          test "${P}" = "SELECT"
+
+      # -----------------------------------------------------------------------
+      # FALSADORES DEL PROPIO CI
+      #
+      # REPARO 2 DE SOL, ACEPTADO: la version anterior de este paso consideraba
+      # exito del falsador CUALQUIER salida distinta de cero. O sea que un
+      # traceback del arnes, un fallo de PostgreSQL o un error de import contaban
+      # como "el guard funciona". Un falsador que acepta cualquier rojo no prueba
+      # que el rojo venga de lo que sabotee: prueba que algo se rompio.
+      #
+      # REPARO 4 DE SOL, ACEPTADO Y AMPLIADO: exigir el PREFIJO `ROJO CASO`
+      # tampoco alcanzaba. El lo probo por inyeccion con el fallo del fixture; yo
+      # lo medi distinto, enumerando las etiquetas de la suite, y da PEOR que su
+      # reporte: el prefijo matcheaba CUATRO checks y solo UNO era el objetivo.
+      # Uno de los tres ajenos es el CONTROL POSITIVO ("con el caso correcto
+      # sigue autorizando"), o sea que si el sabotaje rompiera el camino
+      # LEGITIMO, el guard lo aceptaba como exito. Eso es al reves de lo que el
+      # falsador dice medir.
+      #
+      # Y EL HUECO QUE SOBREVIVIA A SU ARREGLO, medido con el bloque real de esta
+      # rama: si la suite emite el rojo objetivo Y TAMBIEN el del fixture, el
+      # grep exacto matchea y el paso da exit 0. El experimento estaba
+      # CONTAMINADO y el falsador cantaba victoria. Escenarios medidos:
+      #   A. solo el objetivo               -> acepta   (correcto)
+      #   B. objetivo + fixture roto        -> ACEPTABA  (el hueco)
+      #   C. solo el fixture roto           -> rechaza  (lo que Sol ya cerro)
+      #
+      # POR ESO CADA FALSADOR EXIGE TRES COSAS, no una:
+      #   1. exit 1 EXACTO. Ni 0 (no rompio nada) ni 2+ (murio de otra forma).
+      #   2. EXACTAMENTE UN rojo. El numero esta MEDIDO en brain-env contra
+      #      PostgreSQL real: cada sabotaje da 44 verdes y 1 rojo. Un rojo extra
+      #      es un experimento contaminado, no un guard que funciona.
+      #   3. la LINEA COMPLETA del check objetivo, con su obtenido/esperado.
+      # -----------------------------------------------------------------------
+      - name: FALSADOR 1 - invertir el orden de decisiones DEBE romper el check D2
+        run: |
+          set -uo pipefail
+          cp backend/api.py /tmp/api.py.bak
+          python3 - <<'PY'
+          import pathlib
+          p = pathlib.Path("backend/api.py")
+          t = p.read_text()
+          viejo = '    aplicables.sort(key=_clave_decision, reverse=True)\n    ultima = aplicables[0]'
+          assert t.count(viejo) == 1, "no encontre el punto a sabotear"
+          # Orden INVERTIDO: vuelve a ganar la decision mas vieja, o sea el bug.
+          t = t.replace(viejo, '    aplicables.sort(key=_clave_decision)\n    ultima = aplicables[0]', 1)
+          p.write_text(t)
+          print("sabotaje 1 aplicado: orden de decisiones invertido")
+          PY
+          set +e
+          python3 backend/test_regresiones_hitl.py > /tmp/f1.log 2>&1
+          RC=$?
+          set -e
+          cp /tmp/api.py.bak backend/api.py
+          echo "exit del sabotaje 1: ${RC}"
+          if [ "${RC}" != "1" ]; then
+            echo "ROJO DEL FALSADOR: se esperaba exit 1 de aserciones. Un 0 dice que"
+            echo "la suite PASO con el defecto puesto; un 2+ que murio de otra forma."
+            tail -25 /tmp/f1.log
+            exit 1
+          fi
+          # EXPERIMENTO LIMPIO: exactamente un rojo. El `|| true` no es adorno:
+          # `grep -c` sin match imprime 0 y SALE 1, y con `bash -e` eso mata el
+          # paso. Es un defecto que ya tengo documentado dos veces.
+          ROJOS=$(grep -c '^  ROJO ' /tmp/f1.log || true)
+          echo "rojos que emitio la suite: ${ROJOS} (se espera exactamente 1)"
+          if [ "${ROJOS}" != "1" ]; then
+            echo "EXPERIMENTO CONTAMINADO: el sabotaje mide UN defecto, asi que un"
+            echo "rojo de mas significa que ademas se rompio otra cosa y este paso"
+            echo "no puede atribuirle el rojo al sabotaje. Rojos emitidos:"
+            grep '^  ROJO ' /tmp/f1.log || true
+            exit 1
+          fi
+          # La LINEA COMPLETA del check que tiene que caerse, con su
+          # obtenido/esperado. Sin esto, un traceback contaria como exito.
+          if ! grep -Fq '  ROJO D2 EL DEFECTO: tras el rechazo la accion se BLOQUEA: obtenido 200, esperado 403' /tmp/f1.log; then
+            echo "ROJO POR LA RAZON EQUIVOCADA: la suite fallo una sola vez, pero NO"
+            echo "en el check D2 que este sabotaje deberia romper. Ultimas lineas:"
+            tail -25 /tmp/f1.log
+            exit 1
+          fi
+          echo "OK: el sabotaje del orden rompe exactamente el check D2, y nada mas"
+
+      - name: FALSADOR 2 - sacar la igualdad de caso DEBE romper el check del caso
+        run: |
+          set -uo pipefail
+          # Este falsador nace del reparo 1 de Sol: una accion SIN case_id
+          # heredaba una aprobacion atada a un caso. Si alguien saca
+          # `_mismo_caso`, el check correspondiente tiene que caerse.
+          cp backend/api.py /tmp/api.py.bak2
+          python3 - <<'PY'
+          import pathlib
+          p = pathlib.Path("backend/api.py")
+          t = p.read_text()
+          viejo = '                  and _mismo_caso(ev)]'
+          assert t.count(viejo) == 1, "no encontre el filtro de caso"
+          t = t.replace(viejo, '                  ]', 1)
+          p.write_text(t)
+          print("sabotaje 2 aplicado: filtro de caso removido")
+          PY
+          set +e
+          python3 backend/test_regresiones_hitl.py > /tmp/f2.log 2>&1
+          RC=$?
+          set -e
+          cp /tmp/api.py.bak2 backend/api.py
+          echo "exit del sabotaje 2: ${RC}"
+          if [ "${RC}" != "1" ]; then
+            echo "ROJO DEL FALSADOR: se esperaba exit 1 de aserciones, no exito ni salida anormal."
+            tail -25 /tmp/f2.log
+            exit 1
+          fi
+          # EXPERIMENTO LIMPIO. Este guard es el que cierra el hueco medido: sin
+          # el, el rojo del fixture podia viajar JUNTO al objetivo y el paso daba
+          # verde igual, o sea que atribuia al sabotaje un rojo que en realidad
+          # salio de un experimento roto.
+          ROJOS=$(grep -c '^  ROJO ' /tmp/f2.log || true)
+          echo "rojos que emitio la suite: ${ROJOS} (se espera exactamente 1)"
+          if [ "${ROJOS}" != "1" ]; then
+            echo "EXPERIMENTO CONTAMINADO: si ademas del objetivo se cayo la"
+            echo "preparacion (el segundo expediente), el experimento no vale: con"
+            echo "un case_id nulo el check del caso 2 manda el MISMO payload que el"
+            echo "objetivo y el rojo deja de ser atribuible. Rojos emitidos:"
+            grep '^  ROJO ' /tmp/f2.log || true
+            exit 1
+          fi
+          if ! grep -Fq '  ROJO CASO una accion SIN caso NO hereda la aprobacion del caso 1: obtenido 200, esperado 403' /tmp/f2.log; then
+            echo "ROJO POR LA RAZON EQUIVOCADA: la suite fallo una sola vez, pero NO"
+            echo "en el check de la accion sin caso. Ultimas lineas:"
+            tail -25 /tmp/f2.log
+            exit 1
+          fi
+          echo "OK: sacar la igualdad de caso rompe exactamente ese check, y nada mas"
+
+      - name: el arbol quedo sin modificar
+        run: |
+          set -uo pipefail
+          git diff --exit-code -- backend infra
