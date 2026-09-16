@@ -17,10 +17,14 @@ Corre solo con `DATABASE_URL` y `DATABASE_URL_APP`. Sin PostgreSQL declara
 NO MEDIDO: esto es una prueba de privilegios y RLS, y SQLite no tiene ninguno
 de los dos.
 
-DEFECTO DE MI PROPIO INSTRUMENTO, cazado en la medicion previa y arreglado aca:
-la v1 reportaba "PASO" cuando un DELETE afectaba CERO filas. Un DELETE que no
-toca nada NO es un DELETE exitoso, y confundirlos me habria hecho reportar como
-agujero algo que era RLS trabajando. Ahora todo informa `rowcount`.
+DOS DEFECTOS DE MIS PROPIOS INSTRUMENTOS, cazados y arreglados:
+  a. el medidor previo reportaba "PASO" cuando un DELETE afectaba CERO filas.
+     Un DELETE que no toca nada NO es un DELETE exitoso, y confundirlos me
+     habria hecho reportar como agujero algo que era RLS trabajando. Ahora todo
+     informa `rowcount`.
+  b. este test esperaba `RaiseException` fijo en el paso 1, o sea el estado
+     PRE-migracion, y daba ROJO sobre un cluster que ya tenia la migracion
+     aplicada. **Un test que solo pasa la PRIMERA vez no es una regresion.**
 """
 import json
 import os
@@ -99,13 +103,25 @@ def main() -> int:
 
     print("\n=== 1. ANTES de la migracion: el defecto EXISTE (control positivo)")
     sembrar()
+    # Este check es el que duele y es el que NO depende del estado previo:
+    # `init.sql` reaplica `GRANT ... ON ALL TABLES`, asi que el privilegio vuelve
+    # en cada arranque del arnes. Si algun dia da 'InsufficientPrivilege' aca,
+    # significa que el GRANT amplio se corrigio en el esquema y este paso hay
+    # que reescribirlo.
     clase, filas = probar(app_dsn, "DELETE FROM tenants WHERE id=%s",
                           (ids["CTRL"],))
     ok("el rol de la app BORRABA un bufete sin aprobaciones", (clase, filas),
        ("sin error", 1))
+    # DEFECTO DE MI PROPIO INSTRUMENTO, cazado en la segunda corrida: aca esperaba
+    # `RaiseException` fijo, o sea el estado PRE-migracion. Sobre un cluster que
+    # ya tenia la migracion aplicada el error es `ForeignKeyViolation` y el test
+    # daba rojo sin que hubiera defecto. Un test que solo pasa la PRIMERA vez no
+    # es una regresion. Ahora acepta cualquiera de las dos barreras y NOMBRA la
+    # que actuo; lo que se exige es que ALGUNA frene.
     clase, _ = probar(app_dsn, "DELETE FROM tenants WHERE id=%s", (ids["CON"],))
-    ok("y uno CON aprobaciones ya estaba frenado por el trigger", clase,
-       "RaiseException")
+    ok("y uno CON aprobaciones ya estaba frenado",
+       clase in ("RaiseException", "ForeignKeyViolation"), True)
+    print("       barrera que actuo: " + clase)
 
     print("\n=== 2. Aplico la migracion")
     with psycopg.connect(admin, autocommit=True) as c:
