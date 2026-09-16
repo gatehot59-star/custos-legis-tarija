@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "version": 1,
+  "origin_revision": "9eaece7849fd4451b228de7e37d3f8858b67edce",
+  "change_rule": "Explicit review required; never regenerate policy during suite execution. Not a trust boundary against repository writers.",
+  "phases": {
+    "regresion_plazo_penal": [
+      "FALSADOR: la regla vieja da lunes 14 como dia 1 (por eso fallaba)",
+      "FALSADOR: vieja y nueva DIFIEREN, el test discrimina",
+      "civil corto sigue arrancando el dia siguiente HABIL (lunes 14 = dia 1)",
+      "civil corto vence el miercoles 16",
+      "civil de 16 dias corridos vence el 29-sep",
+      "civil de 16 dias es CORRIDO pero arranca el lunes 14, no el sabado",
+      "el dia 1 es el sabado 12, no el lunes",
+      "modo corridos",
+      "ultimo dia inhabil NO se declara confirmado",
+      "viernes + 3 dias cautelares vence el lunes 14",
+      "y dice por que",
+      "y su modo es corridos (o sea que el control discrimina de verdad)"
+    ],
+    "cerrar_fixtures": [
+      "GUARD: borrar un bufete con aprobaciones queda BLOQUEADO"
+    ],
+    "regresiones_con_postgres": [
+      "CASO con el caso correcto sigue autorizando (control positivo)",
+      "CASO el segundo expediente se creo (si no, no se puede medir)",
+      "CASO la aprobacion del caso 1 NO sirve para el caso 2",
+      "CASO una accion SIN caso NO hereda la aprobacion del caso 1",
+      "D1 bufete inexistente da 401",
+      "D1 credencial valida por HTTP+RLS da 200",
+      "D1 devuelve token real",
+      "D1 el mismo email en el bufete B resuelve a B",
+      "D1 email inexistente da 401",
+      "D1 password mala da 401",
+      "D1 sin bufete da 401 (el email esta en DOS bufetes)",
+      "D1 y NO cruza al bufete A",
+      "D1 y resuelve el bufete correcto",
+      "D2 EL DEFECTO: tras el rechazo la accion se BLOQUEA",
+      "D2 aprobacion nueva registrada",
+      "D2 aprobacion registrada",
+      "D2 con aprobacion vigente: 200 (control POSITIVO)",
+      "D2 contenido alterado: 403",
+      "D2 la aprobacion de A no sirve para B: 403",
+      "D2 otro tipo de accion: 403",
+      "D2 rechazo posterior registrado",
+      "D2 sin ninguna decision: 403",
+      "D2 una aprobacion NUEVA vuelve a habilitar",
+      "D3 el canario NO aparece en el log del handler real",
+      "D3 la busqueda responde",
+      "D3 la ruta de error tambien responde",
+      "D3 pero el log SI registra la ruta (no quedo mudo)",
+      "e2e aislamiento NEGATIVO: B no ve el caso de A",
+      "e2e aislamiento POSITIVO: A ve su caso",
+      "e2e crear caso con token de login real",
+      "el rol de la app NO es superusuario",
+      "el rol de la app NO tiene BYPASSRLS"
+    ]
+  }
+}
