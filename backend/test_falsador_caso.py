@@ -5,6 +5,22 @@ Only stdlib and bash. Each scenario uses a temporary backend copy, preserves
 its real assertion helper, and replaces the suite entrypoint with a controlled
 outcome. No database, network, credentials or production writes are required.
 The historical broad 'ROJO CASO' predicate must fail this regression.
+
+SCOPE ADDED AFTER MEASUREMENT (Brain, on top of Sol's five scenarios):
+Sol's version rejected a lone fixture failure, which was the false positive he
+proved. Two gaps survived that fix and both were measured against the real step:
+
+  * CONTAMINATED EXPERIMENT: when the suite emits the target red AND the fixture
+    red, the exact-line grep still matches and the step exits 0. That is not
+    hypothetical: with a null case_id the "other case" check sends the very same
+    payload as the target one, so the red stops being attributable to the
+    sabotage. A falsifier that claims one defect must observe exactly one red.
+  * POSITIVE CONTROL AS SUCCESS: under the old broad prefix, breaking the
+    legitimate path ("con el caso correcto sigue autorizando") was accepted as
+    proof that the sabotage worked, which is backwards.
+
+The expected red count is 1 because it was measured, not assumed: each sabotage
+yields 44 greens and 1 red against real PostgreSQL in brain-env.
 """
 from __future__ import annotations
 
@@ -22,6 +38,7 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / '.github/workflows/api-e2e.yml'
 EXPECTED = 'CASO una accion SIN caso NO hereda la aprobacion del caso 1'
 FIXTURE = 'CASO el segundo expediente se creo (si no, no se puede medir)'
+POSITIVE = 'CASO con el caso correcto sigue autorizando (control positivo)'
 
 
 def read_step(workflow: Path) -> str:
@@ -49,7 +66,7 @@ def inject_entrypoint(original: str, statement: str) -> str:
     last = tree.body[-1]
     if not isinstance(last, ast.If) or ast.unparse(last.test) != "__name__ == '__main__'":
         raise ValueError('suite must end with its main guard')
-    for label in (EXPECTED, FIXTURE):
+    for label in (EXPECTED, FIXTURE, POSITIVE):
         if label not in original:
             raise ValueError('suite assertion label missing: ' + label)
     prefix = '\n'.join(original.splitlines()[:last.lineno - 1]) + '\n'
@@ -110,6 +127,31 @@ class FalsadorCasoRegression(unittest.TestCase):
     def test_expected_label_with_abnormal_exit_is_rejected(self):
         """A label cannot excuse an abnormal suite termination."""
         result = self.run_scenario(f'ok({EXPECTED!r}, 200, 403)\nraise SystemExit(2)\n')
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+
+    def test_contaminated_experiment_is_rejected(self):
+        """Target red plus a fixture red must NOT count as a clean detection.
+
+        Measured gap: the exact-line grep matched and the step exited 0, so a
+        broken experiment was reported as a working guard. With a null case_id
+        the other-case check sends the same payload as the target, so the red is
+        no longer attributable to the sabotage.
+        """
+        result = self.run_scenario(
+            f'ok({FIXTURE!r}, False, True)\n'
+            f'ok({EXPECTED!r}, 200, 403)\n'
+            'raise SystemExit(1)\n')
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('CONTAMINADO', result.stdout, result.stdout)
+
+    def test_broken_positive_control_is_rejected(self):
+        """Breaking the legitimate path is the opposite of a working sabotage.
+
+        Under the old broad 'ROJO CASO' prefix this was accepted as success: the
+        guard celebrated the sabotage precisely when it had destroyed the path
+        that must keep working.
+        """
+        result = self.run_scenario(f'ok({POSITIVE!r}, 403, 200)\nraise SystemExit(1)\n')
         self.assertNotEqual(result.returncode, 0, result.stdout)
 
 
