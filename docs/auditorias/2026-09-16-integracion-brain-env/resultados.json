@@ -1,0 +1,301 @@
+{
+  "machine": "brain-env through MUDH build.run",
+  "root": "/workspace/custos-integration-20260916-0314",
+  "python": "3.12.14 (main, Aug 13 2026, 19:41:13) [GCC 14.2.0]",
+  "started_utc": "2026-09-16T03:18:49.572411+00:00",
+  "checks": [
+    {
+      "name": "fixture password is valid inside its tenant",
+      "actual": true,
+      "expected": true,
+      "passed": true,
+      "scope": "PostgreSQL fixture control"
+    },
+    {
+      "name": "valid login via HTTP and PostgresAlmacen",
+      "actual": 401,
+      "expected": 200,
+      "passed": false,
+      "scope": "full login path"
+    },
+    {
+      "name": "wrong password rejected",
+      "actual": 401,
+      "expected": 401,
+      "passed": true,
+      "scope": "full login path"
+    },
+    {
+      "name": "unauthenticated cases blocked",
+      "actual": 401,
+      "expected": 401,
+      "passed": true,
+      "scope": "full HTTP path"
+    },
+    {
+      "name": "create case through HTTP and PostgreSQL",
+      "actual": 201,
+      "expected": 201,
+      "passed": true,
+      "scope": "downstream with injected synthetic session"
+    },
+    {
+      "name": "tenant A sees own case",
+      "actual": true,
+      "expected": true,
+      "passed": true,
+      "scope": "HTTP + PostgreSQL with synthetic session"
+    },
+    {
+      "name": "tenant B does not see A case",
+      "actual": false,
+      "expected": false,
+      "passed": true,
+      "scope": "HTTP + PostgreSQL with synthetic session"
+    },
+    {
+      "name": "no approval blocks external authorization",
+      "actual": 403,
+      "expected": 403,
+      "passed": true,
+      "scope": "HTTP + PostgreSQL with synthetic session"
+    },
+    {
+      "name": "approval persists in PostgreSQL",
+      "actual": 201,
+      "expected": 201,
+      "passed": true,
+      "scope": "HTTP + PostgreSQL with synthetic session"
+    },
+    {
+      "name": "approved content authorized but not executed",
+      "actual": "AUTORIZADA_PERO_NO_EJECUTADA",
+      "expected": "AUTORIZADA_PERO_NO_EJECUTADA",
+      "passed": true,
+      "scope": "HTTP + PostgreSQL with synthetic session"
+    },
+    {
+      "name": "modified content blocked",
+      "actual": 403,
+      "expected": 403,
+      "passed": true,
+      "scope": "HTTP + PostgreSQL with synthetic session"
+    },
+    {
+      "name": "other tenant cannot reuse approval",
+      "actual": 403,
+      "expected": 403,
+      "passed": true,
+      "scope": "HTTP + PostgreSQL with synthetic session"
+    },
+    {
+      "name": "later rejection persists",
+      "actual": 201,
+      "expected": 201,
+      "passed": true,
+      "scope": "HTTP + PostgreSQL with synthetic session"
+    },
+    {
+      "name": "later rejection revokes old authorization",
+      "actual": 200,
+      "expected": 403,
+      "passed": false,
+      "scope": "HTTP + PostgreSQL with synthetic session"
+    },
+    {
+      "name": "search path responds with synthetic corpus",
+      "actual": 200,
+      "expected": 200,
+      "passed": true,
+      "scope": "real HTTP/store, fake corpus"
+    },
+    {
+      "name": "search text absent from HTTP log",
+      "actual": true,
+      "expected": false,
+      "passed": false,
+      "scope": "actual product HTTP handler"
+    },
+    {
+      "name": "penal cautelar starts next calendar day, declared contract",
+      "actual": "2026-09-16",
+      "expected": "2026-09-14",
+      "passed": false,
+      "scope": "actual engine; synthetic calendar, not legal validation"
+    },
+    {
+      "name": "tracked product source unchanged",
+      "actual": 0,
+      "expected": 0,
+      "passed": true,
+      "scope": "git diff"
+    }
+  ],
+  "baselines": [
+    {
+      "suite": "test_api.py",
+      "exit_code": 0,
+      "log": "test_api.py.log",
+      "tail": "EL HITL: aprobar uno y ejecutar otro ===\n127.0.0.1 POST /acciones/externa \"POST /acciones/externa HTTP/1.1\" 403 -\n  OK   contenido MODIFICADO -> 403 aunque haya aprobacion del original: 403\n  OK   y el error muestra el hash que faltaba: True\n127.0.0.1 POST /acciones/externa \"POST /acciones/externa HTTP/1.1\" 403 -\n  OK   mismo contenido, OTRO tipo de accion -> 403: 403\n127.0.0.1 POST /acciones/externa \"POST /acciones/externa HTTP/1.1\" 403 -\n  OK   la aprobacion del bufete A NO sirve para B -> 403: 403\n127.0.0.1 POST /aprobar \"POST /aprobar HTTP/1.1\" 201 -\n127.0.0.1 POST /acciones/externa \"POST /acciones/externa HTTP/1.1\" 403 -\n  OK   un RECHAZO no habilita la accion -> 403: 403\n\n=== 10. Cerrar sesion invalida el token ===\n127.0.0.1 DELETE /sesion \"DELETE /sesion HTTP/1.1\" 200 -\n  OK   200 al cerrar: 200\n127.0.0.1 GET /casos \"GET /casos HTTP/1.1\" 401 -\n  OK   y despues 401: 401\n\n=== 11. Corpus cerrado -> 503 con el motivo, no un 500 ===\n127.0.0.1 POST /sesion \"POST /sesion HTTP/1.1\" 200 -\n127.0.0.1 GET /buscar \"GET /buscar?q=x HTTP/1.1\" 503 -\n  OK   503, no 500: 503\n  OK   y dice que esta cerrado: cerrado\n\n=== 12. El almacen SIN RLS se niega a ir a produccion ===\n  OK   sin permitir_sin_rls explota\n  OK   en CUSTOS_ENTORNO=produccion explota aunque pase el flag\n\n=== 13. Sin tenant es un DEFECTO (500), no un permiso (403) ===\n  OK   el almacen levanta SinTenant en vez de ampliar el WHERE\n\n==============================================================\nverdes: 65 | rojos: 0\nVERDE\n"
+    },
+    {
+      "suite": "guard_esquema.py",
+      "exit_code": 0,
+      "log": "guard_esquema.py.log",
+      "tail": "tablas creadas en el esquema: 8 -> ['agent_runs', 'aprobaciones', 'cases', 'cl_checkpoints', 'documents', 'tenants', 'users', 'uso_consultas']\ntablas nombradas en el codigo: 4 -> ['aprobaciones', 'cases', 'users', 'uso_consultas']\ntablas con RLS FORZADO: 6 -> ['agent_runs', 'aprobaciones', 'cases', 'cl_checkpoints', 'documents', 'users']\n\nVERDE: toda tabla que el codigo escribe existe en el esquema, y toda tabla con tenant_id tiene RLS forzado\n"
+    },
+    {
+      "suite": "test_rls.py",
+      "exit_code": 0,
+      "log": "test_rls.py.log",
+      "tail": "=== 0. Sembrando dos bufetes (idempotente) ===\n  sembrado (y limpiado lo de corridas anteriores)\n\n=== 1. POSITIVA: cada bufete ve lo suyo ===\n  OK   A ve su caso\n  OK   B ve su caso\n\n=== 2. NEGATIVA en cases ===\n  OK   A NO ve el caso de B\n  OK   el tenant de B no aparece para A\n\n=== 3. NEGATIVA en documents ===\n  OK   A no ve documentos de B\n\n=== 4. EL D3 DE FABLE: los CHECKPOINTS del grafo ===\n  OK   B NO ve el memorial secreto de A\n  OK   B SI ve el suyo (el RLS no lo dejo ciego)\n  OK   consulta dirigida al checkpoint de A da vacio\n\n=== 5. WITH CHECK: escribir con tenant ajeno se rechaza ===\n  OK   insercion cross-tenant bloqueada\n\n=== 6. Trigger: thread_id sin su tenant se rechaza ===\n  OK   thread_id sin tenant rechazado\n\n=== 7. Trigger: el texto crudo es inmutable (D1) ===\n  OK   reescritura del crudo rechazada\n\n=== 8. Sin tenant fijado no se ve NADA (fail-closed) ===\n  OK   sin set_tenant, cero filas\n\n=== 9. CONTRA-TEST DEL INSTRUMENTO ===\n  OK   el superusuario SI ve mis 2 casos\n  OK   y mis 2 checkpoints\n  OK   el secreto de A existe de verdad en la tabla\n\n=== 10. El rol de la app NO tiene BYPASSRLS ===\n  OK   custos_app sin bypassrls\n\n=== 11. Limpieza ===\n  borrados los bufetes de prueba\n\n================================================================\nverdes: 16 | rojos: 0\nVERDE: aislamiento entre bufetes verificado, checkpoints incluidos\n"
+    },
+    {
+      "suite": "test_plazos.py",
+      "exit_code": 0,
+      "log": "test_plazos.py.log",
+      "tail": " no el sabado 12: [datetime.date(2026, 9, 14)]\n  OK   cierre extraordinario del juzgado se respeta: 2026-09-14\n  OK   plazo comun: se computa desde la ULTIMA notificacion: 2026-09-17\n  OK   habiles_restantes invertido da negativo: True\n\n=== 14. La TABLA sigue siendo hipotesis (la REGLA ya no) ===\n  OK   auto interlocutorio = 3 dias: 3\n  OK   marcado HIPOTESIS: HIPOTESIS\n  OK   tipo inventado -> NO_MEDIDO: NO_MEDIDO\n  OK   ningun plazo confirmado todavia: False\n  OK   cada plazo declara su materia: True\n  OK   traslado_demanda avisa que excede 15 dias: True\n\n=== 15. El computo se muestra dia por dia (verificable a mano) ===\n  OK   el texto trae el fundamento: True\n  OK   trae la advertencia de calendario: True\n  OK   trae 30 dias contados: 1\n\n[CONFIRMADO] materia=civil plazo=3 modo=habiles\nfundamento: Art. 90.II Ley 439: plazo de 3 dias, no excede de quince, solo se computan los dias habiles\nvence: 2026-09-15 18:00 (Tue)\n  ADVERTENCIA: hora de cierre del juzgado NO MEDIDA: el art. 90.III dice 'ultimo momento habil del horario de funcionamiento'. Confirme en secretaria\n  2026-09-11 Fri  habil                              cuenta [1/3]\n  2026-09-12 Sat  fin de semana                      no cuenta\n  2026-09-13 Sun  fin de semana                      no cuenta\n  2026-09-14 Mon  habil                              cuenta [2/3]\n  2026-09-15 Tue  habil                              cuenta [3/3]\n\n==============================================================\nverdes: 71 | rojos: 0\nVERDE\n"
+    }
+  ],
+  "scope": "real PostgreSQL and real HTTP; synthetic corpus; no external actions executed",
+  "postgres": "PostgreSQL 17.11 (Debian 17.11-0+deb13u1) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+  "listen_addresses": "",
+  "socket_directory": "/workspace/custos-integration-20260916-0314/socket",
+  "app_role": [
+    "custos_app",
+    false,
+    false
+  ],
+  "rls_tables": [
+    [
+      "agent_runs",
+      true,
+      true
+    ],
+    [
+      "aprobaciones",
+      true,
+      true
+    ],
+    [
+      "cases",
+      true,
+      true
+    ],
+    [
+      "cl_checkpoints",
+      true,
+      true
+    ],
+    [
+      "documents",
+      true,
+      true
+    ],
+    [
+      "tenants",
+      false,
+      false
+    ],
+    [
+      "users",
+      true,
+      true
+    ],
+    [
+      "uso_consultas",
+      false,
+      false
+    ]
+  ],
+  "source_revision": "446e17d029751ebeeecbf89bb57417ed91a1fe16",
+  "source_sha256": {
+    "backend/almacen.py": "173a6b4001b5e08039c21f708bbbf459ad72d3829fa6e590011d0dbdd91c0490",
+    "backend/anonimizador.py": "620db9b6890d754579899660933e173e5e3d9299dadf6a54fcc8ec3a330f4c26",
+    "backend/api.py": "3ced8efb380f1abcfc23448381591f52bbc22e65457c816347d640002bb2181f",
+    "backend/calendario_judicial.py": "6573821fc95b5b2825f40a82d24100afe14d3e66103f5b40038ceca728acc3ff",
+    "backend/corpus_cliente.py": "57942d53f4794eaa93e1746c6447a68bf18ccc7949beac3fa5d075192630291e",
+    "backend/fixtures_reales.py": "2e402482971cb46ccab1556c6bb9aafc646842ba8ca9a45480d2d9a7729a3703",
+    "backend/guard_esquema.py": "c144eeb47cb2d7fc8bacad194aaf1e4e6f763d52999b715964c2d261dab7acfe",
+    "backend/impacto_compuerta.py": "d4d03ca7b9bd1bf08280a30628c72db9778d19dcb7b017252235abcf1527b9d7",
+    "backend/plazos.py": "31b424e4d78ea366109bb50d7f29812055422abecc245688785c5b2f4c05749d",
+    "backend/test_anonimizador.py": "f2d7c0a1f57c32fd0ed654292b159b08ea22381786026190fdd4b1356092e990",
+    "backend/test_api.py": "b7a77730c49c8fcb055af90a74fec50414ce2819c23b561a3c2350c01dfadec2",
+    "backend/test_calendario.py": "84d34b9fc918d409bb3ef02f9a34c81df3ddd1a20f9db8e7a840b9fccb34a8d8",
+    "backend/test_plazos.py": "e1da66585435b684696478b714573655265d995d53617f36d9f86824dea664a3",
+    "backend/test_rls.py": "8ef45ba2762f7c534701aaed5550515bfc8b40f0100c2b90a4a788c4258a7ee4",
+    "infra/init.sql": "56aad362f790f9bde2c938228530383ff50f748ff5e0574fe008dc3dc2f51d2d"
+  },
+  "seeded_active_users": 2,
+  "current_user": "custos_app",
+  "users_without_tenant": 0,
+  "http_port": 42245,
+  "valid_login_response": {
+    "status": 401,
+    "body": {
+      "error": "email o contrasena incorrectos"
+    }
+  },
+  "after_rejection_response": {
+    "status": 200,
+    "body": {
+      "estado": "AUTORIZADA_PERO_NO_EJECUTADA",
+      "aprobada_por_matricula": "TEST-A",
+      "sha256_entrada": "42b3d26e5c9dd0f2ca79a85e8af6a7b281bdcf329f9d9d2ef03958f950322418",
+      "motivo": "no existe integracion con SIREJ/SIGC ni firma digital. El gate autoriza; la ejecucion no esta construida y no se simula."
+    }
+  },
+  "approval_order": [
+    [
+      "rechazado",
+      "2026-09-16 03:18:53.068071+00:00"
+    ],
+    [
+      "aprobado",
+      "2026-09-16 03:18:53.003948+00:00"
+    ]
+  ],
+  "query_log_lines": [
+    "127.0.0.1 GET /buscar \"GET /buscar?q=CANARIO_AUDITORIA_793 HTTP/1.1\" 200 -"
+  ],
+  "penal_actual_trace": [
+    {
+      "fecha": "2026-09-12",
+      "marca": "fin de semana  <- antes del arranque",
+      "cuenta": false,
+      "n": null
+    },
+    {
+      "fecha": "2026-09-13",
+      "marca": "fin de semana  <- antes del arranque",
+      "cuenta": false,
+      "n": null
+    },
+    {
+      "fecha": "2026-09-14",
+      "marca": "habil",
+      "cuenta": true,
+      "n": 1
+    },
+    {
+      "fecha": "2026-09-15",
+      "marca": "habil",
+      "cuenta": true,
+      "n": 2
+    },
+    {
+      "fecha": "2026-09-16",
+      "marca": "habil",
+      "cuenta": true,
+      "n": 3
+    }
+  ],
+  "pg_stop_rc": 0,
+  "pg_status_after_stop_rc": 3,
+  "finished_utc": "2026-09-16T03:18:54.023979+00:00",
+  "summary": {
+    "passed": 14,
+    "failed": 4,
+    "completed_without_harness_error": true
+  }
+}
