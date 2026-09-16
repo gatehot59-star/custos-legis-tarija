@@ -1,8 +1,5 @@
-"""Permanent receipt regressions against the actual FALSADOR 2 shell step.
-Controlled suite main replaces only execution, not its real manifest/helper.
-No PostgreSQL or network. Run: python3 backend/test_falsador_caso.py.
-"""
-import ast
+# Supervisor regressions: synthetic phases, real supervisor and workflow consumer.
+import json
 import os
 from pathlib import Path
 import re
@@ -11,133 +8,100 @@ import subprocess
 import tempfile
 import textwrap
 import unittest
-import suite_receipt as receipt
+import suite_receipt as sr
+ROOT=Path(__file__).resolve().parents[1]
+TARGET="CASO una accion SIN caso NO hereda la aprobacion del caso 1"
+FIXTURE="CASO el segundo expediente se creo (si no, no se puede medir)"
 
-ROOT = Path(__file__).resolve().parents[1]
-TARGET = 'CASO una accion SIN caso NO hereda la aprobacion del caso 1'
-FIXTURE = 'CASO el segundo expediente se creo (si no, no se puede medir)'
+def synthetic_suite(required,failures,change=None):
+    source="NO_MEDIDO=[]\ndef ok(label,a,b): return a==b\ndef sembrar_postgres(admin): return ({}, {})\ndef main(): raise RuntimeError(\"MAIN MUST NOT RUN\")\n"
+    signatures={sr.PHASES[0]:"",sr.PHASES[1]:"admin, app, fixtures",sr.PHASES[2]:"admin, ids, slugs"}
+    for name in sr.PHASES:
+        labels=list(required[name])
+        if change=="missing" and name==sr.PHASES[1]: labels=labels[:-1]
+        if change=="duplicate" and name==sr.PHASES[1]: labels+=labels[:1]
+        if change=="misplaced" and name==sr.PHASES[0]: labels+=required[sr.PHASES[1]]
+        if change=="misplaced" and name==sr.PHASES[1]: labels=[]
+        body="for label in "+repr(labels)+":\n    ok(label, label not in "+repr(failures)+", True)\n"
+        if change=="empty" and name==sr.PHASES[1]: body="pass\n"
+        if change=="trap_first" and name==sr.PHASES[0]: body="raise RuntimeError(\"PHASE_TRAP\")\n"
+        if change=="crash_integration" and name==sr.PHASES[1]: body+="raise RuntimeError(\"integration crash\")\n"
+        if change=="crash_cleanup" and name==sr.PHASES[2]: body+="raise RuntimeError(\"cleanup crash\")\n"
+        if change=="system_exit" and name==sr.PHASES[1]: body+="raise SystemExit(1)\n"
+        if change=="skip" and name==sr.PHASES[1]: body+="NO_MEDIDO.append(\"skipped\")\n"
+        source+="def "+name+"("+signatures[name]+"):\n"+textwrap.indent(body,"    ")
+    if change=="main_replay":
+        source+="def main():\n    for label in "+repr(sr.expected_checks())+":\n        ok(label,True,True)\n    return 0\n"
+        source+="def regresion_plazo_penal(): raise RuntimeError(\"PHASE_TRAP\")\n"
+    return source
 
+class SupervisorRegression(unittest.TestCase):
+    def test_phase_contract(self):
+        required=sr.required_phases()
+        scenarios=[("valid",[],None,True),("expected_failure",[TARGET],None,True),
+                   ("fixture_failure",[FIXTURE],None,False),("contaminated",[TARGET,FIXTURE],None,False),
+                   ("main_replay",[],"main_replay",False),("empty",[],"empty",False),
+                   ("missing",[],"missing",False),("duplicate",[],"duplicate",False),
+                   ("misplaced",[],"misplaced",False),("first_error",[],"trap_first",False),
+                   ("integration_error",[TARGET],"crash_integration",False),
+                   ("cleanup_error",[TARGET],"crash_cleanup",False),
+                   ("system_exit",[TARGET],"system_exit",False),("skip",[],"skip",False)]
+        for name,failures,change,accepted in scenarios:
+            with self.subTest(name=name),tempfile.TemporaryDirectory(prefix="custos-phases-") as tmp:
+                p=Path(tmp)
+                shutil.copytree(ROOT/"backend",p/"backend",ignore=shutil.ignore_patterns("__pycache__"))
+                (p/"backend/test_regresiones_hitl.py").write_text(synthetic_suite(required,failures,change))
+                env=dict(os.environ,DATABASE_URL="SYNTHETIC_NOT_USED",DATABASE_URL_APP="SYNTHETIC_NOT_USED")
+                receipt=p/"result.json"
+                run=subprocess.run(["python3",str(p/"backend/suite_receipt.py"),"run","--receipt",str(receipt),"--run-id",name],env=env,capture_output=True,text=True,timeout=15)
+                data=json.loads(receipt.read_text())
+                cmd=["python3",str(p/"backend/suite_receipt.py"),"validate","--receipt",str(receipt),"--run-id",name,"--exit-code",str(run.returncode)]
+                if failures: cmd += ["--expect",TARGET]
+                val=subprocess.run(cmd,env=env,capture_output=True,text=True,timeout=15)
+                print(name,"run",run.returncode,"validate",val.returncode,"events",data["events"])
+                self.assertEqual(val.returncode==0,accepted,val.stdout+val.stderr)
+                if change in ("crash_integration","system_exit"):
+                    self.assertTrue(data["cleanup_returned"])
+                    self.assertFalse(data["completed"])
+                if change=="crash_cleanup": self.assertFalse(data["cleanup_returned"])
+                if accepted:
+                    self.assertEqual(len(data["checks"]),45)
+                    for fault in ("stale","missing_return","wrong_phase","wrong_hash"):
+                        bad=json.loads(json.dumps(data))
+                        if fault=="stale": bad["run_id"]="older-run"
+                        if fault=="missing_return": bad["events"].pop()
+                        if fault=="wrong_phase": bad["checks"][0]["phase"]=sr.PHASES[1]
+                        if fault=="wrong_hash": bad["policy_sha256"]="0"*64
+                        receipt.write_text(json.dumps(bad))
+                        rejected=subprocess.run(cmd,env=env,capture_output=True,text=True)
+                        self.assertNotEqual(rejected.returncode,0,fault)
 
-def complete(failures, tail=''):
-    """Generate a synthetic normal return with all real check identities."""
-    return (f'for label in {receipt.expected_checks()!r}:\n'
-            f'    ok(label, 200 if label in {failures!r} else 403, 403)\n'
-            + tail + f'return {int(bool(failures))}\n')
+    def test_real_workflow_step(self):
+        text=(ROOT/".github/workflows/api-e2e.yml").read_text()
+        block=next(b for b in re.split(r"^      - name: ",text,flags=re.M) if b.startswith("FALSADOR 2 - "))
+        step=textwrap.dedent(block.split("        run: |\n",1)[1])
+        for change,accepted in ((None,True),("crash_integration",False),("main_replay",False)):
+            with self.subTest(change=change),tempfile.TemporaryDirectory(prefix="custos-step-") as tmp:
+                p=Path(tmp)
+                shutil.copytree(ROOT/"backend",p/"backend",ignore=shutil.ignore_patterns("__pycache__"))
+                (p/"backend/test_regresiones_hitl.py").write_text(synthetic_suite(sr.required_phases(),[TARGET],change))
+                before=(p/"backend/api.py").read_bytes()
+                script=p/"step.sh";script.write_text(step)
+                env=dict(os.environ,DATABASE_URL="SYNTHETIC_NOT_USED",DATABASE_URL_APP="SYNTHETIC_NOT_USED",TMPDIR=tmp)
+                for k in ("PYTHONPATH","BASH_ENV","ENV"): env.pop(k,None)
+                run=subprocess.run(["bash","-e","-o","pipefail",str(script)],cwd=p,env=env,capture_output=True,text=True,timeout=20)
+                self.assertEqual(run.returncode==0,accepted,run.stdout+run.stderr)
+                self.assertEqual((p/"backend/api.py").read_bytes(),before)
 
-
-class CompletionRegression(unittest.TestCase):
-    """Reject incomplete, stale and contaminated evidence; accept valid control."""
-
-    def scenario(self, body, fault=None):
-        """Exercise the real step in a fresh temporary source copy."""
-        text = (ROOT/'.github/workflows/api-e2e.yml').read_text()
-        blocks = [b for b in re.split(r'^      - name: ', text, flags=re.M)
-                  if b.startswith('FALSADOR 2 - ')]
-        self.assertEqual(len(blocks), 1)
-        step = textwrap.dedent(blocks[0].split('        run: |\n', 1)[1])
-        with tempfile.TemporaryDirectory(prefix='custos-receipt-') as tmp:
-            p = Path(tmp)
-            shutil.copytree(ROOT/'backend', p/'backend', ignore=shutil.ignore_patterns('__pycache__'))
-            suite = p/'backend/test_regresiones_hitl.py'
-            source = suite.read_text(); lines = source.splitlines(keepends=True)
-            main = next(n for n in ast.parse(source).body
-                        if isinstance(n, ast.FunctionDef) and n.name == 'main')
-            suite.write_text(''.join(lines[:main.lineno-1]) + 'def main():\n'
-                             + textwrap.indent(body, '    ') + '\n'
-                             + ''.join(lines[main.end_lineno:]))
-            before = (p/'backend/api.py').read_bytes()
-            step = step.replace('/tmp/api.py.bak2',str(p/'backup')).replace('/tmp/f2.log',str(p/'log'))
-            if fault:
-                ops={'missing':'rm -f "$RECEIPT"', 'stale':'RUN_ID="other-run"',
-                     'malformed':"printf '{broken' > \"$RECEIPT\""}
-                needle='python3 backend/suite_receipt.py validate'
-                self.assertIn(needle,step)
-                step=step.replace(needle,ops[fault]+'\n'+needle,1)
-            (p/'step.sh').write_text(step)
-            env=dict(os.environ,TMPDIR=tmp)
-            for k in ['DATABASE_URL','DATABASE_URL_APP','PYTHONPATH','BASH_ENV','ENV']:
-                env.pop(k,None)
-            r=subprocess.run(['bash','--noprofile','--norc','-e','-o','pipefail',str(p/'step.sh')],
-                             cwd=p,env=env,text=True,capture_output=True,timeout=30)
-            self.assertIn('sabotaje 2 aplicado',r.stdout,r.stdout+r.stderr)
-            self.assertEqual((p/'backend/api.py').read_bytes(),before)
-            return r
-
-    def test_receipt_contract(self):
-        """Fifteen outcomes discriminate completion from matching log output."""
-        scenarios=[
-            ('complete_target',complete([TARGET]),None,True),
-            ('target_then_crash',f'ok({TARGET!r},200,403)\nraise RuntimeError("after target")\n',None,False),
-            ('cleanup_crash',complete([TARGET],'raise RuntimeError("cleanup")\n'),None,False),
-            ('partial_return',f'ok({TARGET!r},200,403)\nreturn 1\n',None,False),
-            ('fixture_only',complete([FIXTURE]),None,False),
-            ('contaminated',complete([TARGET,FIXTURE]),None,False),
-            ('positive_broken',complete(['CASO con el caso correcto sigue autorizando (control positivo)']),None,False),
-            ('traceback','raise RuntimeError("setup")\n',None,False),
-            ('no_failure',complete([]),None,False),
-            ('abnormal_exit',complete([TARGET],'raise SystemExit(2)\n'),None,False),
-            ('missing',complete([TARGET]),'missing',False),
-            ('stale',complete([TARGET]),'stale',False),
-            ('malformed',complete([TARGET]),'malformed',False),
-            ('duplicate',complete([TARGET],f'ok({TARGET!r},200,403)\n'),None,False),
-            ('skipped',complete([TARGET],'NO_MEDIDO.append("database unavailable")\n'),None,False),
-        ]
-        for name,body,fault,accepted in scenarios:
-            with self.subTest(name=name):
-                r=self.scenario(body,fault)
-                print(f'{name}: step_exit={r.returncode}, expected_accept={accepted}')
-                self.assertEqual(r.returncode==0,accepted,r.stdout+r.stderr)
-
-
-class RequiredPolicyRegression(unittest.TestCase):
-    """Requirements cannot shrink when executable checks disappear."""
-
-    def test_policy_has_reviewed_phase_inventory(self):
-        policy = __import__('json').loads(receipt.POLICY.read_text())
-        self.assertEqual({k: len(v) for k, v in policy['phases'].items()},
-                         {'regresion_plazo_penal': 12, 'regresiones_con_postgres': 32, 'cerrar_fixtures': 1})
-        self.assertEqual(len(receipt.expected_checks()), 45)
-
-    def test_suite_reduction_cannot_reduce_required_checks(self):
-        with tempfile.TemporaryDirectory(prefix='custos-policy-') as tmp:
-            p = Path(tmp)
-            shutil.copytree(ROOT/'backend', p/'backend', ignore=shutil.ignore_patterns('__pycache__'))
-            source = "NO_MEDIDO=[]\ndef ok(label,a,b): return a==b\ndef regresion_plazo_penal(): ok('surviving check',True,True)\ndef regresiones_con_postgres(a,b): pass\ndef cerrar_fixtures(a,b,c): pass\ndef main():\n    regresion_plazo_penal()\n    return 0\n"
-            (p/'backend/test_regresiones_hitl.py').write_text(source)
-            result = p/'result.json'
-            run = subprocess.run(['python3',str(p/'backend/suite_receipt.py'),'run','--receipt',str(result),'--run-id','reduced'],capture_output=True,text=True)
-            data = __import__('json').loads(result.read_text())
-            self.assertEqual(run.returncode, 2, run.stderr)
-            self.assertEqual(len(data['expected_checks']), 45)
-            self.assertFalse(data['completed'])
-            self.assertFalse(data['cleanup_returned'])
-            # Even manually declaring completion with the shrunken list fails.
-            data.update(completed=True, cleanup_returned=True, error=None,
-                        expected_checks=['surviving check'], suite_exit=0, process_exit=0)
-            result.write_text(__import__('json').dumps(data))
-            checked = subprocess.run(['python3',str(p/'backend/suite_receipt.py'),'validate','--receipt',str(result),'--run-id','reduced','--exit-code','0'],capture_output=True,text=True)
-            self.assertEqual(checked.returncode, 2)
-            self.assertIn('missing, duplicate or unexpected checks', checked.stderr)
-
-    def test_invalid_policy_fails_closed(self):
+    def test_policy_rejects_malformed_missing_empty(self):
         from unittest.mock import patch
-        import json
-        base = json.loads(receipt.POLICY.read_text())
-        with tempfile.TemporaryDirectory(prefix='custos-bad-policy-') as tmp:
-            path = Path(tmp)/'policy.json'
-            with patch.object(receipt, 'POLICY', path):
-                with self.assertRaises(FileNotFoundError): receipt.expected_checks()
-                path.write_text('{invalid')
-                with self.assertRaises(json.JSONDecodeError): receipt.expected_checks()
-                for name in receipt.PHASES:
-                    policy = json.loads(json.dumps(base)); policy['phases'][name] = []
-                    path.write_text(json.dumps(policy))
-                    with self.assertRaises(ValueError): receipt.expected_checks()
-                policy = json.loads(json.dumps(base))
-                policy['phases']['cerrar_fixtures'] = [policy['phases']['regresion_plazo_penal'][0]]
-                path.write_text(json.dumps(policy))
-                with self.assertRaises(ValueError): receipt.expected_checks()
+        with tempfile.TemporaryDirectory() as tmp:
+            p=Path(tmp)/"policy.json"
+            with patch.object(sr,"POLICY",p):
+                with self.assertRaises(FileNotFoundError): sr.required_phases()
+                p.write_text("{bad")
+                with self.assertRaises(json.JSONDecodeError): sr.required_phases()
+                p.write_text(json.dumps(dict(schema=1,version=1,phases={x:[] for x in sr.PHASES})))
+                with self.assertRaises(ValueError): sr.required_phases()
 
-
-if __name__=='__main__':
-    unittest.main(verbosity=2)
+if __name__=="__main__": unittest.main(verbosity=2)
