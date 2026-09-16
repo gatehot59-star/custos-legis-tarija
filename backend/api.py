@@ -26,7 +26,8 @@ LOS TRES CONTROLES DUROS, y cada uno con su falsador en CI
   2. NINGUNA accion externa sale sin un evento de aprobacion por matricula
      registrado ANTES, sobre el sha256 EXACTO del contenido que se va a ejecutar.
      Aprobar un borrador y ejecutar otro es la fuga obvia y esta cerrada. Y
-     desde el 2026-09-16 tampoco sale si la ULTIMA decision es un rechazo: ver
+     desde el 2026-09-16 tampoco sale si la ULTIMA decision es un rechazo, ni
+     si la aprobacion pertenece a OTRO caso o a NINGUN caso: ver
      `exigir_aprobacion`.
   3. La jurisprudencia NO se sirve como texto: pasa por la compuerta de
      `anonimizador.py`. La normativa si, porque no tiene partes.
@@ -42,15 +43,16 @@ QUE ES NO MEDIDO
      las sesiones. Aceptable para un piloto, NO para produccion con varios
      workers. Declarado.
   4. No hay paginacion en `/casos`. Con 20 expedientes no importa; con 2.000 si.
-  5. PostgreSQL **16**: las corridas de integracion del taller fueron sobre
-     17.11, porque el 16 embebido no traia las extensiones. La version del CI la
-     cubre el workflow `api-e2e.yml`.
+  5. El CONTRATO de una accion externa SIN caso. Hoy el gate exige que la
+     aprobacion tampoco tenga caso, que es el lado seguro, pero nadie definio si
+     una accion sin expediente deberia existir. Es una decision de producto.
 
 LO QUE DEJO DE SER NO MEDIDO el 2026-09-16: `PostgresAlmacen` SI se ejecuto,
 contra PostgreSQL real con el rol `custos_app` sin superusuario y sin BYPASSRLS.
-Ahi se midieron los cuatro defectos que corrige este archivo y `almacen.py`.
-Dejarlo escrito como pendiente seria un pendiente falso, y un pendiente falso
-cuesta lo mismo que uno real.
+Ahi se midieron los cuatro defectos que corrige este archivo y `almacen.py`. Y
+PostgreSQL **16** quedo cubierto por el workflow `api-e2e.yml`, que corrio verde
+contra `postgres:16`. Dejarlos escritos como pendientes seria un pendiente falso,
+y un pendiente falso cuesta lo mismo que uno real.
 
 --------------------------------------------------------------------------------
 DOS DEFECTOS DE OPERACION QUE APARECIERON AL CORRER EL `__main__`
@@ -222,14 +224,40 @@ def exigir_aprobacion(almacen: Almacen, tenant_id: str, tipo: str,
     # Ahora se resuelve la ULTIMA decision aplicable por (tenant, caso, tipo,
     # hash) con orden determinista declarado ACA, sin depender del ORDER BY del
     # almacen: timestamp DESC y, ante empate exacto, id DESC.
+    #
+    # REPARO DE SOL, MEDIDO Y CONFIRMADO EN PARTE. Su hallazgo estatico: el
+    # almacen filtra por caso solo si `case_id` es truthy, asi que con None
+    # devuelve TODAS las aprobaciones del bufete, y este filtro no volvia a
+    # exigir igualdad de caso.
+    #
+    # Lo medi por HTTP contra el gate real (medir_reparo_case_id.py):
+    #   aprobacion atada al caso 1, accion en el caso 1  -> 200  correcto
+    #   aprobacion atada al caso 1, accion en el caso 2  -> 403  NO heredaba
+    #   aprobacion atada al caso 1, accion SIN caso      -> 200  HEREDABA
+    #
+    # O sea: no habia fuga entre casos, pero una accion que NO declara caso se
+    # colgaba de una aprobacion atada a un expediente concreto. El abogado firmo
+    # "para este caso" y el gate lo leia como "para cualquier cosa sin caso".
+    # Ahora el caso es parte de la identidad de la decision, y None solo matchea
+    # None: la comparacion es explicita en las dos puntas para que un id vacio no
+    # se confunda con "cualquiera".
+    def _mismo_caso(ev: dict) -> bool:
+        propio = ev.get("case_id")
+        if case_id is None or propio is None:
+            return case_id is None and propio is None
+        return str(propio) == str(case_id)
+
     aplicables = [ev for ev in almacen.aprobaciones(tenant_id, case_id)
-                  if ev.get("tipo") == tipo and ev.get("sha256_entrada") == h]
+                  if ev.get("tipo") == tipo and ev.get("sha256_entrada") == h
+                  and _mismo_caso(ev)]
     if not aplicables:
         raise GateBloqueado(
             f"accion '{tipo}' BLOQUEADA: no hay NINGUNA decision de un abogado "
-            f"con matricula sobre este contenido exacto (sha256 {h[:12]}...). "
-            "Aprobar un borrador y ejecutar otro no cuenta: el hash tiene que "
-            "coincidir. Fundamento: Ley 387 arts. 6 y 32.II")
+            f"con matricula sobre este contenido exacto (sha256 {h[:12]}...) "
+            f"para este caso (case_id={case_id}). Aprobar un borrador y "
+            "ejecutar otro no cuenta, y una aprobacion de otro expediente "
+            "tampoco: el hash Y el caso tienen que coincidir. Fundamento: "
+            "Ley 387 arts. 6 y 32.II")
     aplicables.sort(key=_clave_decision, reverse=True)
     ultima = aplicables[0]
     if ultima.get("decision") != "aprobado":
@@ -272,13 +300,15 @@ class App:
             "acciones_externas_bloqueadas_sin_matricula": sorted(ACCIONES_EXTERNAS),
             "no_medido": [
                 # Se corrigio el 2026-09-16: antes decia que PostgresAlmacen no
-                # se habia ejecutado. Ya se ejecuto contra PostgreSQL real, asi
-                # que dejarlo aca era un pendiente FALSO.
-                "PostgreSQL 16: la integracion se midio sobre 17.11; el 16 lo "
-                "cubre el CI (api-e2e.yml)",
+                # se habia ejecutado, y despues que PostgreSQL 16 no estaba
+                # medido. Las dos cosas ya son falsas: dejarlas aca seria un
+                # pendiente FALSO, que cuesta lo mismo que uno real.
                 "corpus cerrado al publico: /buscar no medido contra el real",
                 "tokens en memoria del proceso: un reinicio corta las sesiones",
                 "TLS, rate limiting y rotacion de tokens: van en nginx, no aca",
+                "el contrato de una accion externa SIN caso: el gate exige que "
+                "la aprobacion tampoco tenga caso (lado seguro), pero nadie "
+                "definio si esa accion deberia existir",
             ],
         }
 
