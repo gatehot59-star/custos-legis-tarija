@@ -121,35 +121,44 @@ jobs:
       # -----------------------------------------------------------------------
       # FALSADORES DEL PROPIO CI
       #
-      # REPARO 2 DE SOL, ACEPTADO: la version anterior de este paso consideraba
-      # exito del falsador CUALQUIER salida distinta de cero. O sea que un
-      # traceback del arnes, un fallo de PostgreSQL o un error de import contaban
-      # como "el guard funciona". Un falsador que acepta cualquier rojo no prueba
-      # que el rojo venga de lo que sabotee: prueba que algo se rompio.
+      # Historia de este bloque, porque cada condicion se gano estar aca:
       #
-      # REPARO 4 DE SOL, ACEPTADO Y AMPLIADO: exigir el PREFIJO `ROJO CASO`
-      # tampoco alcanzaba. El lo probo por inyeccion con el fallo del fixture; yo
-      # lo medi distinto, enumerando las etiquetas de la suite, y da PEOR que su
-      # reporte: el prefijo matcheaba CUATRO checks y solo UNO era el objetivo.
-      # Uno de los tres ajenos es el CONTROL POSITIVO ("con el caso correcto
-      # sigue autorizando"), o sea que si el sabotaje rompiera el camino
-      # LEGITIMO, el guard lo aceptaba como exito. Eso es al reves de lo que el
-      # falsador dice medir.
+      # v1: aceptaba CUALQUIER exit distinto de cero. Un traceback del arnes o un
+      #     fallo de PostgreSQL contaban como "el guard funciona". Reparo 2 de
+      #     Sol.
+      # v2: exigia el PREFIJO `ROJO CASO`. Sol probo por inyeccion que un fallo
+      #     de la PREPARACION lo satisfacia; yo lo medi enumerando etiquetas y
+      #     daba peor: el prefijo matcheaba CUATRO checks y solo UNO era el
+      #     objetivo. Uno de los ajenos era el CONTROL POSITIVO, o sea que romper
+      #     el camino LEGITIMO contaba como sabotaje exitoso.
+      # v3: linea exacta + exit 1 + exactamente UN rojo. Cerraba el experimento
+      #     CONTAMINADO (objetivo + fixture roto juntos).
+      # v4, esta: Sol encontro TARGET-THEN-CRASH. La suite emite la etiqueta
+      #     objetivo y DESPUES revienta. Una excepcion Python sale 1 y no suma
+      #     linea ROJO, asi que las tres condiciones de v3 se cumplian con la
+      #     suite MUERTA a mitad de camino y el control positivo sin correr.
+      #     Medido contra main:
+      #       A. solo el objetivo          -> aceptaba  (correcto)
+      #       B. objetivo y luego crash    -> ACEPTABA  (el hueco)
+      #       C. objetivo y luego exit 0   -> rechazaba
+      #       D. crash sin objetivo        -> rechazaba
       #
-      # Y EL HUECO QUE SOBREVIVIA A SU ARREGLO, medido con el bloque real de esta
-      # rama: si la suite emite el rojo objetivo Y TAMBIEN el del fixture, el
-      # grep exacto matchea y el paso da exit 0. El experimento estaba
-      # CONTAMINADO y el falsador cantaba victoria. Escenarios medidos:
-      #   A. solo el objetivo               -> acepta   (correcto)
-      #   B. objetivo + fixture roto        -> ACEPTABA  (el hueco)
-      #   C. solo el fixture roto           -> rechaza  (lo que Sol ya cerro)
-      #
-      # POR ESO CADA FALSADOR EXIGE TRES COSAS, no una:
+      # LO QUE UN FALSADOR TIENE QUE COMPROBAR, y son CINCO cosas:
       #   1. exit 1 EXACTO. Ni 0 (no rompio nada) ni 2+ (murio de otra forma).
-      #   2. EXACTAMENTE UN rojo. El numero esta MEDIDO en brain-env contra
-      #      PostgreSQL real: cada sabotaje da 44 verdes y 1 rojo. Un rojo extra
-      #      es un experimento contaminado, no un guard que funciona.
-      #   3. la LINEA COMPLETA del check objetivo, con su obtenido/esperado.
+      #   2. la suite TERMINO: su linea de cierre `verdes: N | rojos: M` esta.
+      #      Un crash no la imprime. Sin esto, "llego a la primera asercion" se
+      #      lee igual que "corrio completo".
+      #   3. la ULTIMA linea es exactamente ROJO, que es como la suite se despide.
+      #   4. COHERENCIA: los rojos que la suite DECLARA en su cierre son los
+      #      mismos que los rojos CONTADOS en el log. Si se contradice, el
+      #      instrumento no sirve y da igual que el numero sea el esperado.
+      #   5. EXACTAMENTE UN rojo, y es la LINEA COMPLETA del check objetivo con
+      #      su obtenido/esperado.
+      #
+      # NO se fija el numero de VERDES a proposito. Hoy son 44 y eso esta medido,
+      # pero seria un numero magico que rompe el CI cada vez que alguien agregue
+      # un check legitimo, y un guard que se rompe por trabajo correcto se acaba
+      # desactivando. Lo que se exige es COHERENCIA, que no caduca.
       # -----------------------------------------------------------------------
       - name: FALSADOR 1 - invertir el orden de decisiones DEBE romper el check D2
         run: |
@@ -178,12 +187,38 @@ jobs:
             tail -25 /tmp/f1.log
             exit 1
           fi
-          # EXPERIMENTO LIMPIO: exactamente un rojo. El `|| true` no es adorno:
-          # `grep -c` sin match imprime 0 y SALE 1, y con `bash -e` eso mata el
-          # paso. Es un defecto que ya tengo documentado dos veces.
-          ROJOS=$(grep -c '^  ROJO ' /tmp/f1.log || true)
-          echo "rojos que emitio la suite: ${ROJOS} (se espera exactamente 1)"
-          if [ "${ROJOS}" != "1" ]; then
+          # LA SUITE TIENE QUE HABER TERMINADO. Esto cierra el target-then-crash:
+          # una excepcion posterior al check objetivo da exit 1 y no suma rojos,
+          # asi que sin este guard se leia igual que una corrida completa.
+          CIERRE=$(grep -E '^verdes: [0-9]+ \| rojos: [0-9]+$' /tmp/f1.log || true)
+          if [ -z "${CIERRE}" ]; then
+            echo "SUITE INCOMPLETA: no imprimio su linea de cierre, o sea que MURIO"
+            echo "a mitad de camino. Los checks posteriores -- incluido el control"
+            echo "positivo -- nunca corrieron, asi que el rojo no prueba que el"
+            echo "defecto siga siendo detectable. Ultimas lineas:"
+            tail -25 /tmp/f1.log
+            exit 1
+          fi
+          echo "cierre de la suite: ${CIERRE}"
+          ULTIMA=$(tail -n 1 /tmp/f1.log)
+          if [ "${ULTIMA}" != "ROJO" ]; then
+            echo "TERMINACION ANORMAL: la ultima linea es '${ULTIMA}' y no ROJO."
+            tail -25 /tmp/f1.log
+            exit 1
+          fi
+          # COHERENCIA entre lo que la suite DECLARA y lo que IMPRIMIO. El `|| true`
+          # no es adorno: `grep -c` sin match imprime 0 y SALE 1, y con `bash -e`
+          # eso mata el paso. Es un defecto que ya tengo documentado dos veces.
+          CONTADOS=$(grep -c '^  ROJO ' /tmp/f1.log || true)
+          DECLARADOS=$(echo "${CIERRE}" | sed 's/.*rojos: //')
+          echo "rojos contados=${CONTADOS} declarados=${DECLARADOS} (se espera 1 y 1)"
+          if [ "${CONTADOS}" != "${DECLARADOS}" ]; then
+            echo "INSTRUMENTO INCOHERENTE: la suite declara ${DECLARADOS} rojos y"
+            echo "escribio ${CONTADOS}. Da igual cual sea el esperado: si el propio"
+            echo "instrumento se contradice, su veredicto no vale."
+            exit 1
+          fi
+          if [ "${CONTADOS}" != "1" ]; then
             echo "EXPERIMENTO CONTAMINADO: el sabotaje mide UN defecto, asi que un"
             echo "rojo de mas significa que ademas se rompio otra cosa y este paso"
             echo "no puede atribuirle el rojo al sabotaje. Rojos emitidos:"
@@ -198,7 +233,7 @@ jobs:
             tail -25 /tmp/f1.log
             exit 1
           fi
-          echo "OK: el sabotaje del orden rompe exactamente el check D2, y nada mas"
+          echo "OK: corrida COMPLETA, y el sabotaje del orden rompe exactamente el check D2"
 
       - name: FALSADOR 2 - sacar la igualdad de caso DEBE romper el check del caso
         run: |
@@ -228,13 +263,32 @@ jobs:
             tail -25 /tmp/f2.log
             exit 1
           fi
-          # EXPERIMENTO LIMPIO. Este guard es el que cierra el hueco medido: sin
-          # el, el rojo del fixture podia viajar JUNTO al objetivo y el paso daba
-          # verde igual, o sea que atribuia al sabotaje un rojo que en realidad
-          # salio de un experimento roto.
-          ROJOS=$(grep -c '^  ROJO ' /tmp/f2.log || true)
-          echo "rojos que emitio la suite: ${ROJOS} (se espera exactamente 1)"
-          if [ "${ROJOS}" != "1" ]; then
+          # LA SUITE TIENE QUE HABER TERMINADO (target-then-crash de Sol).
+          CIERRE=$(grep -E '^verdes: [0-9]+ \| rojos: [0-9]+$' /tmp/f2.log || true)
+          if [ -z "${CIERRE}" ]; then
+            echo "SUITE INCOMPLETA: no imprimio su linea de cierre, o sea que MURIO"
+            echo "a mitad de camino. El control positivo (con el caso correcto sigue"
+            echo "autorizando) nunca corrio, asi que este rojo no prueba que el"
+            echo "sabotaje rompa SOLO lo que dice romper. Ultimas lineas:"
+            tail -25 /tmp/f2.log
+            exit 1
+          fi
+          echo "cierre de la suite: ${CIERRE}"
+          ULTIMA=$(tail -n 1 /tmp/f2.log)
+          if [ "${ULTIMA}" != "ROJO" ]; then
+            echo "TERMINACION ANORMAL: la ultima linea es '${ULTIMA}' y no ROJO."
+            tail -25 /tmp/f2.log
+            exit 1
+          fi
+          CONTADOS=$(grep -c '^  ROJO ' /tmp/f2.log || true)
+          DECLARADOS=$(echo "${CIERRE}" | sed 's/.*rojos: //')
+          echo "rojos contados=${CONTADOS} declarados=${DECLARADOS} (se espera 1 y 1)"
+          if [ "${CONTADOS}" != "${DECLARADOS}" ]; then
+            echo "INSTRUMENTO INCOHERENTE: la suite declara ${DECLARADOS} rojos y"
+            echo "escribio ${CONTADOS}. Su veredicto no vale."
+            exit 1
+          fi
+          if [ "${CONTADOS}" != "1" ]; then
             echo "EXPERIMENTO CONTAMINADO: si ademas del objetivo se cayo la"
             echo "preparacion (el segundo expediente), el experimento no vale: con"
             echo "un case_id nulo el check del caso 2 manda el MISMO payload que el"
@@ -248,7 +302,7 @@ jobs:
             tail -25 /tmp/f2.log
             exit 1
           fi
-          echo "OK: sacar la igualdad de caso rompe exactamente ese check, y nada mas"
+          echo "OK: corrida COMPLETA, y sacar la igualdad de caso rompe exactamente ese check"
 
       - name: el arbol quedo sin modificar
         run: |
