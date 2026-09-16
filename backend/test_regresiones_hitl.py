@@ -10,9 +10,18 @@ Un test que no puede fallar cuando el bug vuelve no es una regresion, es
 decoracion.
 
 Corre contra PostgreSQL real si hay `DATABASE_URL`/`DATABASE_URL_APP` en el
-entorno; si no, corre la parte que SqliteAlmacen puede sostener y declara en la
-salida que la parte de RLS quedo NO MEDIDA. No inventa un verde con SQLite:
-SQLite no tiene RLS y el defecto 1 ERA de RLS.
+entorno; si no, corre la parte que no necesita base y declara NO MEDIDO el
+resto. NO se sustituye por SQLite: SQLite no tiene RLS y el defecto 1 ERA de
+RLS, asi que un verde ahi no probaria nada.
+
+DOS DEFECTOS DE ESTE ARCHIVO, cazados en su primera corrida y arreglados:
+  1. el `redirect_stdout` que captura el log del handler se comia tambien los
+     `print` de los checks, asi que los resultados eran invisibles. Un
+     instrumento cuya salida no se ve no mide: ahora los checks van al stdout
+     REAL guardado al importar, y el buffer solo recibe el log del servidor.
+  2. la limpieza hacia DELETE sobre `users` y violaba la FK
+     `aprobaciones_usuario_id_fkey`. Ahora borra el TENANT y deja que el
+     `ON DELETE CASCADE` del esquema haga el resto.
 """
 import contextlib
 import datetime as _dt
@@ -31,6 +40,8 @@ import almacen as al  # noqa: E402
 import api  # noqa: E402
 import plazos  # noqa: E402
 
+# El stdout REAL, tomado antes de cualquier redireccion.
+SALIDA = sys.stdout
 VERDES = 0
 ROJOS = 0
 NO_MEDIDO: list[str] = []
@@ -38,15 +49,19 @@ CANARIO = "CANARIO_REGRESION_" + uuid.uuid4().hex[:8]
 PASSWORD = "regresion-only-" + uuid.uuid4().hex[:8]
 
 
+def di(texto: str) -> None:
+    print(texto, file=SALIDA, flush=True)
+
+
 def ok(etiqueta: str, actual, esperado) -> bool:
     global VERDES, ROJOS
     paso = actual == esperado
     if paso:
         VERDES += 1
-        print(f"  OK   {etiqueta}: {actual!r}")
+        di(f"  OK   {etiqueta}: {actual!r}")
     else:
         ROJOS += 1
-        print(f"  ROJO {etiqueta}: obtenido {actual!r}, esperado {esperado!r}")
+        di(f"  ROJO {etiqueta}: obtenido {actual!r}, esperado {esperado!r}")
     return paso
 
 
@@ -77,7 +92,7 @@ def pedir(port, metodo, ruta, cuerpo=None, token=None):
 
 @contextlib.contextmanager
 def servidor(app):
-    """Levanta el handler HTTP REAL y captura su stdout para auditarlo."""
+    """Levanta el handler HTTP REAL y captura SU stdout para auditarlo."""
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         srv = api.servir(app, "127.0.0.1", 0)
@@ -91,11 +106,11 @@ def servidor(app):
 
 
 # ---------------------------------------------------------------------------
-# DEFECTO 4 - PLAZO CAUTELAR PENAL (no necesita base: es aritmetica + norma)
+# DEFECTO 4 - PLAZO CAUTELAR PENAL (no necesita base: es norma + aritmetica)
 # ---------------------------------------------------------------------------
 
 def regresion_plazo_penal():
-    print("\n=== D4. Arranque del plazo cautelar penal (art. 130 CPP) ===")
+    di("\n=== D4. Arranque del plazo cautelar penal (art. 130 CPP) ===")
     cal = plazos.CalendarioJudicial()
     cal.declarar_cubierto(2026)
     cal.declarar_cubierto(2027)
@@ -112,16 +127,30 @@ def regresion_plazo_penal():
        [d["fecha"].isoformat() for d in c.detalle if d["n"] == 1], ["2026-09-12"])
     ok("modo corridos", c.modo, "corridos")
 
-    # CONTROL POSITIVO: el civil NO cambia. Sigue el art. 90.I Ley 439, que si
-    # exige dia siguiente HABIL. Si este control se cae, el arreglo penal se
-    # comio la regla civil y el falsador lo tiene que ver.
+    # CONTROL POSITIVO 1: el civil de POCOS dias no cambia (art. 90.I: dia
+    # siguiente HABIL).
     civ = plazos.computo_detallado(_dt.date(2026, 9, 11), 3, plazos.Materia.CIVIL,
                                    calendario=cal)
-    ok("civil sigue arrancando el dia siguiente HABIL (lunes 14 = dia 1)",
+    ok("civil corto sigue arrancando el dia siguiente HABIL (lunes 14 = dia 1)",
        [d["fecha"].isoformat() for d in civ.detalle if d["n"] == 1],
        ["2026-09-14"])
-    ok("civil vence el miercoles 16", civ.vencimiento.date().isoformat(),
+    ok("civil corto vence el miercoles 16", civ.vencimiento.date().isoformat(),
        "2026-09-16")
+
+    # CONTROL POSITIVO 2, Y ES EL QUE ME REFUTO LA PRIMERA VERSION: un plazo
+    # CIVIL de mas de 15 dias tambien se computa CORRIDO (art. 90.II Ley 439),
+    # pero su arranque sigue siendo el dia siguiente HABIL (art. 90.I). O sea
+    # que "corridos" NO implica "arranque calendario". Si este control se cae,
+    # el arreglo penal se comio la regla civil.
+    civ16 = plazos.computo_detallado(_dt.date(2026, 9, 11), 16,
+                                     plazos.Materia.CIVIL, calendario=cal)
+    ok("civil de 16 dias es CORRIDO pero arranca el lunes 14, no el sabado",
+       [d["fecha"].isoformat() for d in civ16.detalle if d["n"] == 1],
+       ["2026-09-14"])
+    ok("civil de 16 dias corridos vence el 29-sep",
+       civ16.vencimiento.date().isoformat(), "2026-09-29")
+    ok("y su modo es corridos (o sea que el control discrimina de verdad)",
+       civ16.modo, "corridos")
 
     # BORDE CON INCERTIDUMBRE DECLARADA: si el ultimo dia corrido cae inhabil,
     # el art. 130 se contradice ('dias corridos' vs 'ultimo dia habil'). Eso no
@@ -134,9 +163,8 @@ def regresion_plazo_penal():
     ok("y dice por que",
        any("NO CONFIRMADO" in a for a in borde.advertencias), True)
 
-    # FALSADOR: si alguien vuelve a exigir arranque habil para corridos, el
-    # primer assert de arriba tiene que dar ROJO. Se prueba con la regla vieja
-    # reimplementada aca, sin tocar el modulo.
+    # FALSADOR: la regla vieja (arranque habil) da OTRA fecha. Si algun dia las
+    # dos coinciden, este test dejo de discriminar y hay que rehacerlo.
     def arranque_viejo(base):
         cur = base
         for _ in range(40):
@@ -145,14 +173,14 @@ def regresion_plazo_penal():
                 return cur
         raise AssertionError("sin habil")
     viejo = arranque_viejo(_dt.date(2026, 9, 11))
-    ok("FALSADOR: la regla vieja da lunes 14 como dia 1 (y por eso fallaba)",
+    ok("FALSADOR: la regla vieja da lunes 14 como dia 1 (por eso fallaba)",
        viejo.isoformat(), "2026-09-14")
-    ok("FALSADOR: la regla vieja y la nueva DIFIEREN (el test discrimina)",
+    ok("FALSADOR: vieja y nueva DIFIEREN, el test discrimina",
        viejo != _dt.date(2026, 9, 12), True)
 
 
 # ---------------------------------------------------------------------------
-# DEFECTOS 1, 2 y 3 - contra la base que haya
+# DEFECTOS 1, 2 y 3 - contra PostgreSQL real con el rol de la aplicacion
 # ---------------------------------------------------------------------------
 
 def sembrar_postgres(dsn_admin):
@@ -164,7 +192,7 @@ def sembrar_postgres(dsn_admin):
             c.execute("INSERT INTO tenants(id,slug,nombre_bufete)"
                       " VALUES (%s,%s,%s)",
                       (ids[etq], slugs[etq], "REGRESION " + etq))
-            # MISMO email en los dos bufetes: es el caso que el login por email
+            # MISMO email en los dos bufetes: es el caso que un login por email
             # suelto no puede resolver, y el que prueba que el bufete manda.
             c.execute(
                 "INSERT INTO users(id,tenant_id,email,password_hash,"
@@ -177,16 +205,17 @@ def sembrar_postgres(dsn_admin):
 
 
 def limpiar_postgres(dsn_admin, ids):
+    # Se borra el TENANT y el esquema cascadea users, cases y aprobaciones
+    # (ON DELETE CASCADE sobre tenant_id). Borrar `users` directo violaba
+    # `aprobaciones_usuario_id_fkey`: la evidencia apunta al abogado que firmo.
     import psycopg
     with psycopg.connect(dsn_admin, autocommit=True) as c:
-        c.execute("DELETE FROM users WHERE id = ANY(%s::uuid[])",
-                  ([ids["UA"], ids["UB"]],))
         c.execute("DELETE FROM tenants WHERE id = ANY(%s::uuid[])",
                   ([ids["A"], ids["B"]],))
 
 
 def regresiones_con_postgres(dsn_admin, dsn_app):
-    print("\n=== D1/D2/D3 contra PostgreSQL REAL, rol de aplicacion ===")
+    di("\n=== D1/D2/D3 contra PostgreSQL REAL, rol de aplicacion ===")
     import psycopg
     with psycopg.connect(dsn_app) as c:
         rol = c.execute("SELECT rolname, rolsuper, rolbypassrls FROM pg_roles"
@@ -276,7 +305,7 @@ def regresiones_con_postgres(dsn_admin, dsn_app):
             st, _ = pedir(port, "POST", "/acciones/externa", payload, token)
             ok("D2 EL DEFECTO: tras el rechazo la accion se BLOQUEA", st, 403)
             # Y una aprobacion NUEVA vuelve a habilitar: si no, el gate quedo
-            # trabado y eso tambien seria un defecto.
+            # trabado, y eso tambien seria un defecto.
             st, _ = pedir(port, "POST", "/aprobar",
                           {"tipo": "presentar_escrito", "contenido": contenido,
                            "case_id": cid, "decision": "aprobado",
@@ -312,9 +341,9 @@ def regresiones_con_postgres(dsn_admin, dsn_app):
 
 
 def main() -> int:
-    print("=" * 66)
-    print("REGRESIONES DE LOS CUATRO DEFECTOS - canario", CANARIO)
-    print("=" * 66)
+    di("=" * 66)
+    di("REGRESIONES DE LOS CUATRO DEFECTOS - canario " + CANARIO)
+    di("=" * 66)
     regresion_plazo_penal()
     dsn_admin = os.environ.get("DATABASE_URL")
     dsn_app = os.environ.get("DATABASE_URL_APP")
@@ -325,11 +354,11 @@ def main() -> int:
             "D1/D2/D3 con PostgreSQL: sin DATABASE_URL/DATABASE_URL_APP. NO se "
             "sustituye por SQLite: SQLite no tiene RLS y el defecto 1 ERA de "
             "RLS, asi que un verde ahi no probaria nada")
-    print("\n" + "=" * 66)
+    di("\n" + "=" * 66)
     for m in NO_MEDIDO:
-        print("NO MEDIDO: " + m)
-    print(f"verdes: {VERDES} | rojos: {ROJOS}")
-    print("VERDE" if ROJOS == 0 else "ROJO")
+        di("NO MEDIDO: " + m)
+    di(f"verdes: {VERDES} | rojos: {ROJOS}")
+    di("VERDE" if ROJOS == 0 else "ROJO")
     return 1 if ROJOS else 0
 
 
