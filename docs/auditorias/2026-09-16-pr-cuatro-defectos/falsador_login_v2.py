@@ -1,4 +1,5 @@
-"""Falsador del login, v2. Corrige el reparo de Sol sobre la v1.
+"""Falsador del login. Tercera version: ahora el guard de restauracion puede
+DAR ROJO, que es lo unico que lo vuelve un guard.
 
 EL DEFECTO DE LA v1, confirmado: el `ALTER ROLE ... NOBYPASSRLS` vivia en el
 camino normal. El `finally` detenia el cluster pero NO garantizaba revocar el
@@ -6,14 +7,38 @@ privilegio si algo explotaba entre elevar y revocar. La corrida registrada si
 revirtio, y eso es una OBSERVACION, no una garantia. La distincion es de Sol y
 es correcta.
 
-QUE CAMBIA ACA:
-  1. La revocacion pasa al `finally` y se VERIFICA leyendo `pg_roles` despues.
-  2. Se agrega un brazo con EXCEPCION INYECTADA justo despues de elevar: tiene
-     que restaurar el rol, detener el cluster y CONSERVAR el error original.
-  3. Antes de empezar se CHEQUEA el estado heredado: si una corrida anterior
-     murio por SIGKILL con el privilegio puesto, este arranque lo tiene que ver
-     y decirlo. `finally` no corre si el proceso recibe SIGKILL, y eso queda
-     declarado como limite en vez de asumido como cubierto.
+EL DEFECTO DE LA v2, y tambien es de Sol: la revocacion paso al `finally`, pero
+envuelta en `contextlib.suppress(Exception)`. O sea que si el `ALTER` fallaba,
+NADIE se enteraba: el rol quedaba con BYPASSRLS puesto y el script imprimia
+"rojos: 0". **Un guard que se calla cuando falla es peor que no tenerlo, porque
+reparte tranquilidad falsa.** Sol lo dijo como "suprime errores de restauracion
+en bloque exterior" y tiene razon entera.
+
+Y UN DEFECTO MIO QUE APARECIO AL LEERLO PARA ARREGLAR EL DE SOL: la v2 no tenia
+NINGUN `sys.exit`. Contaba rojos, los imprimia, y salia con codigo 0. Cualquier
+script o CI que lo llamara lo habria visto verde con rojos adentro. Es
+exactamente el patron que vengo cazando en los guards del workflow, esta vez
+dentro de mi propio instrumento.
+
+QUE HAY AHORA:
+  1. La revocacion vive en el `finally` y **su error se captura, se escribe en
+     el JSON y cuenta como ROJO**. Nada de suppress.
+  2. El veredicto de restauracion NO se cree del `ALTER`: se lee de `pg_roles`
+     despues. Si el rol quedo con bypass, es ROJO aunque el ALTER no haya
+     levantado nada.
+  3. Brazo con EXCEPCION INYECTADA justo despues de elevar: tiene que restaurar
+     el rol, detener el cluster y CONSERVAR el error original.
+  4. Chequeo de ESTADO HEREDADO al arrancar: si una corrida anterior murio por
+     SIGKILL con el privilegio puesto, este arranque lo tiene que ver y decirlo.
+     `finally` no corre con SIGKILL, y eso queda declarado como limite en vez de
+     asumido como cubierto.
+  5. MODO SABOTAJE (`FALSADOR_V2_SABOTEAR_REVOCACION=1`): hace que `revocar()`
+     levante. Existe para FALSAR el guard nuevo, porque un guard que nunca se
+     probo contra su propio fallo es una anecdota. Con el sabotaje puesto este
+     script tiene que: reportar ROJO, decir que el rol pudo quedar elevado, y
+     SALIR CON CODIGO 1. Y la corrida siguiente, sin sabotaje, tiene que cazar
+     el bypass HEREDADO en el paso 0. Esa cadena es la prueba de que las dos
+     defensas discriminan.
 
 Solo cluster sintetico aislado. NUNCA produccion. No se sobrescribe la evidencia
 de corridas anteriores: cada corrida escribe su propio JSON con timestamp.
@@ -44,6 +69,8 @@ SOCK = ROOT / "socket"
 DATA = ROOT / "pgdata"
 DSN_ADMIN = f"host={SOCK} dbname=postgres user=audit_admin"
 DSN_APP = f"host={SOCK} dbname=postgres user=custos_app"
+# Sabotaje del propio guard. Apagado salvo que se pida a proposito.
+SABOTAJE = os.environ.get("FALSADOR_V2_SABOTEAR_REVOCACION") == "1"
 sys.path.insert(0, str(BACK))
 
 import psycopg  # noqa: E402
@@ -51,8 +78,10 @@ import almacen  # noqa: E402
 import api  # noqa: E402
 
 SELLO = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-out = {"instrumento": "falsador del login v2 (revocacion en finally)",
+out = {"instrumento": "falsador del login v2 (revocacion en finally, con su "
+                      "error medido)",
        "root": str(ROOT), "sello": SELLO,
+       "sabotaje_de_la_revocacion": SABOTAJE,
        "started_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
        "brazos": [], "verdes": 0, "rojos": 0}
 
@@ -63,6 +92,12 @@ def chk(etiqueta, actual, esperado):
     print(f"  {'OK  ' if paso else 'ROJO'} {etiqueta}: {actual!r}"
           + ("" if paso else f" (esperaba {esperado!r})"))
     return paso
+
+
+def rojo(etiqueta, detalle):
+    """ROJO sin comparacion: para los fallos del propio instrumento."""
+    out["rojos"] += 1
+    print(f"  ROJO {etiqueta}: {detalle}")
 
 
 class ExcepcionInyectada(RuntimeError):
@@ -94,6 +129,11 @@ def elevar():
 
 
 def revocar():
+    if SABOTAJE:
+        raise RuntimeError(
+            "revocacion SABOTEADA a proposito "
+            "(FALSADOR_V2_SABOTEAR_REVOCACION=1). Si este script termina en "
+            "verde o con codigo 0, el guard de restauracion no sirve")
     with psycopg.connect(DSN_ADMIN, autocommit=True) as c:
         c.execute("ALTER ROLE custos_app NOBYPASSRLS")
 
@@ -137,9 +177,11 @@ try:
     started = True
 
     # --- CHEQUEO DE ESTADO HEREDADO ---------------------------------------
-    # Si una corrida anterior murio por SIGKILL despues de elevar, el
-    # privilegio quedo puesto. `finally` no corre con SIGKILL: la unica defensa
-    # es mirarlo al arrancar.
+    # Si una corrida anterior murio por SIGKILL despues de elevar, o si su
+    # revocacion FALLO, el privilegio quedo puesto. `finally` no corre con
+    # SIGKILL: la unica defensa es mirarlo al arrancar. Este chequeo tiene que
+    # dar ROJO tras una corrida con FALSADOR_V2_SABOTEAR_REVOCACION=1, y eso es
+    # medible en dos corridas seguidas.
     heredado = estado_rol()
     out["rol_heredado"] = heredado
     print("=== 0. Estado heredado del rol (defensa contra SIGKILL previo) ===")
@@ -216,13 +258,35 @@ except Exception as e:  # noqa: BLE001
     error_conservado = repr(e)
     raise
 finally:
-    # REVOCACION EN EL finally, que es el reparo de Sol. Se ejecuta pase lo que
-    # pase y se VERIFICA leyendo el catalogo, no asumiendo que el ALTER anduvo.
+    # REVOCACION EN EL finally, que era el reparo anterior de Sol, PERO ahora sin
+    # tragarse su propio error, que era el reparo nuevo. La v2 tenia:
+    #     with contextlib.suppress(Exception):
+    #         revocar()
+    # y con eso un ALTER fallido quedaba invisible: rol elevado y "rojos: 0".
     if started:
-        with contextlib.suppress(Exception):
+        try:
             revocar()
-        with contextlib.suppress(Exception):
+            out["revocacion_final"] = "OK"
+        except Exception as e:  # noqa: BLE001
+            out["revocacion_final"] = f"FALLO: {type(e).__name__}: {e}"
+            rojo("la revocacion final FALLO", out["revocacion_final"])
+            print("       EL ROL PUEDE HABER QUEDADO CON BYPASSRLS PUESTO.")
+            print("       Revisar a mano: ALTER ROLE custos_app NOBYPASSRLS")
+        try:
             out["rol_final"] = estado_rol()
+        except Exception as e:  # noqa: BLE001
+            out["rol_final"] = f"NO MEDIDO: {type(e).__name__}: {e}"
+            rojo("no pude LEER el rol final", out["rol_final"])
+        # EL VEREDICTO SE LEE DEL CATALOGO, no del ALTER. Un ALTER que no levanta
+        # no prueba que el privilegio se fue.
+        rf = out.get("rol_final")
+        if isinstance(rf, (list, tuple)):
+            if bool(rf[2]):
+                rojo("EL ROL QUEDO CON BYPASSRLS", repr(rf))
+            else:
+                out["verdes"] += 1
+                print("  OK   el rol final NO tiene bypassrls (leido de "
+                      f"pg_roles): {rf!r}")
         s = subprocess.run([str(PG / "pg_ctl"), "-D", str(DATA), "-m", "fast",
                             "-w", "stop"], env=ENV, capture_output=True,
                            text=True)
@@ -248,4 +312,12 @@ finally:
                                  default=str))
     print(f"\nverdes: {out['verdes']} | rojos: {out['rojos']}")
     print("rol final:", out.get("rol_final"))
+    print("revocacion final:", out.get("revocacion_final"))
     print("evidencia:", destino.name)
+    print("VERDE" if out["rojos"] == 0 else "ROJO")
+    # LA v2 NO TENIA ESTO y es un defecto mio, no de Sol: contaba rojos, los
+    # imprimia, y salia con codigo 0. Cualquier script que lo llamara lo veia
+    # verde. Si hay una excepcion en vuelo NO se llama exit: dejarla propagar
+    # conserva el traceback, y su codigo ya es distinto de cero.
+    if error_conservado is None and out["rojos"]:
+        sys.exit(1)
