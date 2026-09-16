@@ -1,0 +1,64 @@
+{
+  "instrumento": "falsador propio del rojo del login",
+  "root": "/workspace/custos-integration-20260916-0314",
+  "started_utc": "2026-09-16T04:47:45.508164+00:00",
+  "brazos": [
+    {
+      "brazo": "control-rol-real",
+      "password_correcta": 401,
+      "password_incorrecta": 401,
+      "email_inexistente": 401,
+      "bypassrls_efectivo": false
+    },
+    {
+      "brazo": "sabotaje-bypassrls",
+      "password_correcta": 200,
+      "password_incorrecta": 401,
+      "email_inexistente": 401,
+      "bypassrls_efectivo": true
+    },
+    {
+      "brazo": "control-tras-revertir",
+      "password_correcta": 401,
+      "password_incorrecta": 401,
+      "email_inexistente": 401,
+      "bypassrls_efectivo": false
+    }
+  ],
+  "pg_start_rc": 0,
+  "rol_antes": [
+    "custos_app",
+    false,
+    false
+  ],
+  "rol_revertido": [
+    "custos_app",
+    false,
+    false
+  ],
+  "veredicto": {
+    "el_401_lo_causa_RLS": true,
+    "el_check_password_incorrecta_discrimina_con_login_roto": false,
+    "reversion_ok": true
+  },
+  "pg_stop_rc": 0,
+  "pg_status_after_stop_rc": 3,
+  "git_diff_producto": "",
+  "sha256_producto": {
+    "almacen.py": "173a6b4001b5e08039c21f708bbbf459ad72d3829fa6e590011d0dbdd91c0490",
+    "anonimizador.py": "620db9b6890d754579899660933e173e5e3d9299dadf6a54fcc8ec3a330f4c26",
+    "api.py": "3ced8efb380f1abcfc23448381591f52bbc22e65457c816347d640002bb2181f",
+    "calendario_judicial.py": "6573821fc95b5b2825f40a82d24100afe14d3e66103f5b40038ceca728acc3ff",
+    "corpus_cliente.py": "57942d53f4794eaa93e1746c6447a68bf18ccc7949beac3fa5d075192630291e",
+    "fixtures_reales.py": "2e402482971cb46ccab1556c6bb9aafc646842ba8ca9a45480d2d9a7729a3703",
+    "guard_esquema.py": "c144eeb47cb2d7fc8bacad194aaf1e4e6f763d52999b715964c2d261dab7acfe",
+    "impacto_compuerta.py": "d4d03ca7b9bd1bf08280a30628c72db9778d19dcb7b017252235abcf1527b9d7",
+    "plazos.py": "31b424e4d78ea366109bb50d7f29812055422abecc245688785c5b2f4c05749d",
+    "test_anonimizador.py": "f2d7c0a1f57c32fd0ed654292b159b08ea22381786026190fdd4b1356092e990",
+    "test_api.py": "b7a77730c49c8fcb055af90a74fec50414ce2819c23b561a3c2350c01dfadec2",
+    "test_calendario.py": "84d34b9fc918d409bb3ef02f9a34c81df3ddd1a20f9db8e7a840b9fccb34a8d8",
+    "test_plazos.py": "e1da66585435b684696478b714573655265d995d53617f36d9f86824dea664a3",
+    "test_rls.py": "8ef45ba2762f7c534701aaed5550515bfc8b40f0100c2b90a4a788c4258a7ee4"
+  },
+  "finished_utc": "2026-09-16T04:47:48.196205+00:00"
+}
