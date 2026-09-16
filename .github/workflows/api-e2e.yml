@@ -17,6 +17,11 @@ name: api-e2e
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - "backend/**"
+      - "infra/**"
+      - ".github/workflows/api-e2e.yml"
   push:
     paths:
       - "backend/**"
@@ -50,6 +55,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: REGRESION - el falsador rechaza errores de preparacion
+        run: python3 backend/test_falsador_caso.py
+
       - name: instalar cliente y driver
         run: |
           sudo apt-get update -qq
@@ -68,7 +76,7 @@ jobs:
         run: |
           set -uo pipefail
           # Si custos_app fuera superusuario o tuviera BYPASSRLS, TODO lo que
-          # sigue seria un verde vacio. Este paso puede dar rojo y por eso vale.
+          # sigue seria un verde vacio. Se mide antes de creer en nada.
           psql -h localhost -U postgres -d custos -tAc "SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname='custos_app'"
           N=$(psql -h localhost -U postgres -d custos -tAc "SELECT count(*) FROM pg_roles WHERE rolname='custos_app' AND (rolsuper OR rolbypassrls)")
           echo "roles con atajo: ${N}"
@@ -182,11 +190,11 @@ jobs:
           set -e
           cp /tmp/api.py.bak2 backend/api.py
           echo "exit del sabotaje 2: ${RC}"
-          if [ "${RC}" = "0" ]; then
-            echo "ROJO DEL FALSADOR: la suite PASO sin la igualdad de caso."
+          if [ "${RC}" != "1" ]; then
+            echo "ROJO DEL FALSADOR: se esperaba exit 1 de aserciones, no exito ni salida anormal."
             exit 1
           fi
-          if ! grep -q 'ROJO CASO' /tmp/f2.log; then
+          if ! grep -Fq '  ROJO CASO una accion SIN caso NO hereda la aprobacion del caso 1: obtenido 200, esperado 403' /tmp/f2.log; then
             echo "ROJO POR LA RAZON EQUIVOCADA: la suite fallo, pero NO en un check"
             echo "del caso. Ultimas lineas:"
             tail -25 /tmp/f2.log
