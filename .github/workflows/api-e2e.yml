@@ -1,0 +1,120 @@
+# API + REGRESIONES EXTREMO A EXTREMO, CONTRA POSTGRESQL 16 REAL
+#
+# POR QUE UN ARCHIVO NUEVO Y NO UNA EDICION DE tests.yml: el workflow existente
+# tiene 501 lineas y tres jobs que hoy pasan. Un cambio delicado de CI que se
+# mete en medio puede romper lo que ya funciona y eso se descubre despues del
+# merge. Un archivo aparte no puede romper nada: si este falla, falla solo.
+#
+# QUE HUECO CIERRA: la auditoria del 15-sep midio que el CI pasaba VERDE sin
+# ejecutar `test_api.py`, sin `guard_esquema.py` y sin tocar `PostgresAlmacen`.
+# O sea que el login podia estar roto -- y lo estaba -- con el CI en verde. Un
+# CI que no puede dar rojo por el defecto que hay en el arbol no es un CI.
+#
+# POSTGRESQL 16 A PROPOSITO: la corrida de brain-env uso 17.11 porque el 16
+# embebido no traia las extensiones. 17 no es equivalente a 16 y no se declara
+# como tal: la version del CI es la que manda.
+name: api-e2e
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "backend/**"
+      - "infra/**"
+      - ".github/workflows/api-e2e.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  api-e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: custos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/custos
+      DATABASE_URL_APP: postgresql://custos_app:CAMBIAR_EN_PRODUCCION@localhost:5432/custos
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: instalar cliente y driver
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+          python3 -m pip install --quiet 'psycopg[binary]'
+
+      - name: version del motor (queda escrita, no se asume)
+        run: psql -h localhost -U postgres -d custos -tAc "SELECT version()"
+
+      - name: aplicar el esquema
+        run: |
+          set -uo pipefail
+          psql -h localhost -U postgres -d custos -v ON_ERROR_STOP=1 -f infra/init.sql
+
+      - name: CONTROL DEL INSTRUMENTO - el rol de la app no tiene atajos
+        run: |
+          set -uo pipefail
+          # Si custos_app fuera superusuario o tuviera BYPASSRLS, TODO lo que
+          # sigue seria un verde vacio. Este paso puede dar rojo y por eso vale.
+          psql -h localhost -U postgres -d custos -tAc "SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname='custos_app'"
+          N=$(psql -h localhost -U postgres -d custos -tAc "SELECT count(*) FROM pg_roles WHERE rolname='custos_app' AND (rolsuper OR rolbypassrls)")
+          echo "roles con atajo: ${N}"
+          test "${N}" = "0"
+
+      - name: guard del esquema
+        run: python3 backend/guard_esquema.py
+
+      - name: suite de API
+        run: python3 backend/test_api.py
+
+      - name: RLS con PostgresAlmacen real
+        run: python3 backend/test_rls.py
+
+      - name: REGRESIONES e2e desde login REAL (sin sesiones inyectadas)
+        run: python3 backend/test_regresiones_hitl.py
+
+      - name: FALSADOR DEL CI - con el defecto de vuelta esto DEBE dar rojo
+        run: |
+          set -uo pipefail
+          # El paso anterior en verde no prueba que este workflow pueda ver un
+          # defecto: prueba que hoy no hay ninguno. Aca se reintroduce el bug
+          # del gate (aceptar cualquier aprobacion historica) y se EXIGE que la
+          # suite falle. Si pasa, el CI es decorativo y el job se cae.
+          cp backend/api.py /tmp/api.py.bak
+          python3 - <<'PY'
+          import pathlib
+          p = pathlib.Path("backend/api.py")
+          t = p.read_text()
+          viejo = '    aplicables.sort(key=_clave_decision, reverse=True)\n    ultima = aplicables[0]'
+          assert t.count(viejo) == 1, "no encontre el punto a sabotear"
+          # Orden INVERTIDO: vuelve a ganar la decision mas vieja.
+          t = t.replace(viejo, '    aplicables.sort(key=_clave_decision)\n    ultima = aplicables[0]', 1)
+          p.write_text(t)
+          print("sabotaje aplicado")
+          PY
+          if python3 backend/test_regresiones_hitl.py; then
+            echo "ROJO DEL FALSADOR: la suite paso CON el defecto puesto."
+            echo "Este CI no puede detectar el bug que dice cubrir."
+            cp /tmp/api.py.bak backend/api.py
+            exit 1
+          fi
+          echo "OK: con el defecto puesto la suite da rojo, o sea que discrimina"
+          cp /tmp/api.py.bak backend/api.py
+
+      - name: el arbol quedo sin modificar
+        run: |
+          set -uo pipefail
+          git diff --exit-code -- backend infra
