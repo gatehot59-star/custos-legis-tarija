@@ -6,21 +6,26 @@ its real assertion helper, and replaces the suite entrypoint with a controlled
 outcome. No database, network, credentials or production writes are required.
 The historical broad 'ROJO CASO' predicate must fail this regression.
 
-SCOPE ADDED AFTER MEASUREMENT (Brain, on top of Sol's five scenarios):
-Sol's version rejected a lone fixture failure, which was the false positive he
-proved. Two gaps survived that fix and both were measured against the real step:
+SCOPE ADDED AFTER MEASUREMENT (Brain, on top of Sol's five scenarios).
+Measured with this same test against the three workflow versions:
 
-  * CONTAMINATED EXPERIMENT: when the suite emits the target red AND the fixture
-    red, the exact-line grep still matches and the step exits 0. That is not
-    hypothetical: with a null case_id the "other case" check sends the very same
-    payload as the target one, so the red stops being attributable to the
-    sabotage. A falsifier that claims one defect must observe exactly one red.
-  * POSITIVE CONTROL AS SUCCESS: under the old broad prefix, breaking the
-    legitimate path ("con el caso correcto sigue autorizando") was accepted as
-    proof that the sabotage worked, which is backwards.
+  scenario                     broad grep   Sol's exact line   + red count
+  contaminated_experiment         FAIL            FAIL              ok
+  broken_positive_control         FAIL             ok               ok
 
-The expected red count is 1 because it was measured, not assumed: each sabotage
-yields 44 greens and 1 red against real PostgreSQL in brain-env.
+  * CONTAMINATED EXPERIMENT was a real gap left open by the exact-line fix: when
+    the suite emits the target red AND the fixture red, the grep still matches
+    and the step exits 0. Not hypothetical: with a null case_id the "other case"
+    check sends the very same payload as the target one, so the red stops being
+    attributable to the sabotage. A falsifier that claims one defect must observe
+    exactly one red. The expected count is 1 because it was measured, not
+    assumed: each sabotage yields 44 greens and 1 red against real PostgreSQL.
+  * BROKEN POSITIVE CONTROL was already closed by the exact-line fix. It was a
+    gap of the ORIGINAL broad prefix, where breaking the legitimate path counted
+    as proof the sabotage worked, which is backwards. It stays as a regression
+    against ever going back to a family-wide predicate, and it is NOT a repair of
+    Sol's work: an earlier version of this docstring claimed both were, and that
+    attribution was wrong.
 """
 from __future__ import annotations
 
@@ -132,10 +137,10 @@ class FalsadorCasoRegression(unittest.TestCase):
     def test_contaminated_experiment_is_rejected(self):
         """Target red plus a fixture red must NOT count as a clean detection.
 
-        Measured gap: the exact-line grep matched and the step exited 0, so a
-        broken experiment was reported as a working guard. With a null case_id
-        the other-case check sends the same payload as the target, so the red is
-        no longer attributable to the sabotage.
+        MEASURED GAP of the exact-line predicate: the grep matched and the step
+        exited 0, so a broken experiment was reported as a working guard. With a
+        null case_id the other-case check sends the same payload as the target,
+        so the red is no longer attributable to the sabotage.
         """
         result = self.run_scenario(
             f'ok({FIXTURE!r}, False, True)\n'
@@ -147,9 +152,11 @@ class FalsadorCasoRegression(unittest.TestCase):
     def test_broken_positive_control_is_rejected(self):
         """Breaking the legitimate path is the opposite of a working sabotage.
 
-        Under the old broad 'ROJO CASO' prefix this was accepted as success: the
-        guard celebrated the sabotage precisely when it had destroyed the path
-        that must keep working.
+        Measured: the exact-line predicate ALREADY rejects this, so it is not a
+        gap of that fix. It was a gap of the original broad prefix, which
+        celebrated the sabotage precisely when it had destroyed the path that
+        must keep working. Kept as a regression against reintroducing any
+        family-wide predicate.
         """
         result = self.run_scenario(f'ok({POSITIVE!r}, 403, 200)\nraise SystemExit(1)\n')
         self.assertNotEqual(result.returncode, 0, result.stdout)
