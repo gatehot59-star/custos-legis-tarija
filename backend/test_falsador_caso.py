@@ -89,5 +89,55 @@ class CompletionRegression(unittest.TestCase):
                 self.assertEqual(r.returncode==0,accepted,r.stdout+r.stderr)
 
 
+class RequiredPolicyRegression(unittest.TestCase):
+    """Requirements cannot shrink when executable checks disappear."""
+
+    def test_policy_has_reviewed_phase_inventory(self):
+        policy = __import__('json').loads(receipt.POLICY.read_text())
+        self.assertEqual({k: len(v) for k, v in policy['phases'].items()},
+                         {'regresion_plazo_penal': 12, 'regresiones_con_postgres': 32, 'cerrar_fixtures': 1})
+        self.assertEqual(len(receipt.expected_checks()), 45)
+
+    def test_suite_reduction_cannot_reduce_required_checks(self):
+        with tempfile.TemporaryDirectory(prefix='custos-policy-') as tmp:
+            p = Path(tmp)
+            shutil.copytree(ROOT/'backend', p/'backend', ignore=shutil.ignore_patterns('__pycache__'))
+            source = "NO_MEDIDO=[]\ndef ok(label,a,b): return a==b\ndef regresion_plazo_penal(): ok('surviving check',True,True)\ndef regresiones_con_postgres(a,b): pass\ndef cerrar_fixtures(a,b,c): pass\ndef main():\n    regresion_plazo_penal()\n    return 0\n"
+            (p/'backend/test_regresiones_hitl.py').write_text(source)
+            result = p/'result.json'
+            run = subprocess.run(['python3',str(p/'backend/suite_receipt.py'),'run','--receipt',str(result),'--run-id','reduced'],capture_output=True,text=True)
+            data = __import__('json').loads(result.read_text())
+            self.assertEqual(run.returncode, 2, run.stderr)
+            self.assertEqual(len(data['expected_checks']), 45)
+            self.assertFalse(data['completed'])
+            self.assertFalse(data['cleanup_returned'])
+            # Even manually declaring completion with the shrunken list fails.
+            data.update(completed=True, cleanup_returned=True, error=None,
+                        expected_checks=['surviving check'], suite_exit=0, process_exit=0)
+            result.write_text(__import__('json').dumps(data))
+            checked = subprocess.run(['python3',str(p/'backend/suite_receipt.py'),'validate','--receipt',str(result),'--run-id','reduced','--exit-code','0'],capture_output=True,text=True)
+            self.assertEqual(checked.returncode, 2)
+            self.assertIn('missing, duplicate or unexpected checks', checked.stderr)
+
+    def test_invalid_policy_fails_closed(self):
+        from unittest.mock import patch
+        import json
+        base = json.loads(receipt.POLICY.read_text())
+        with tempfile.TemporaryDirectory(prefix='custos-bad-policy-') as tmp:
+            path = Path(tmp)/'policy.json'
+            with patch.object(receipt, 'POLICY', path):
+                with self.assertRaises(FileNotFoundError): receipt.expected_checks()
+                path.write_text('{invalid')
+                with self.assertRaises(json.JSONDecodeError): receipt.expected_checks()
+                for name in receipt.PHASES:
+                    policy = json.loads(json.dumps(base)); policy['phases'][name] = []
+                    path.write_text(json.dumps(policy))
+                    with self.assertRaises(ValueError): receipt.expected_checks()
+                policy = json.loads(json.dumps(base))
+                policy['phases']['cerrar_fixtures'] = [policy['phases']['regresion_plazo_penal'][0]]
+                path.write_text(json.dumps(policy))
+                with self.assertRaises(ValueError): receipt.expected_checks()
+
+
 if __name__=='__main__':
     unittest.main(verbosity=2)

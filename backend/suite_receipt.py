@@ -6,7 +6,6 @@ This detects accidental incomplete runs, not a malicious suite forging evidence.
 """
 from __future__ import annotations
 import argparse
-import ast
 import hashlib
 import importlib.util
 import json
@@ -17,25 +16,36 @@ import tempfile
 import traceback
 
 SUITE = Path(__file__).with_name('test_regresiones_hitl.py')
-FUNCTIONS = ('regresion_plazo_penal', 'regresiones_con_postgres', 'cerrar_fixtures')
+POLICY = Path(__file__).with_name('required_checks.json')
+PHASES = ('regresion_plazo_penal', 'regresiones_con_postgres', 'cerrar_fixtures')
 
 
-def expected_checks(path: Path = SUITE) -> list[str]:
-    """Read all literal assertion identities from the three suite phases."""
-    tree = ast.parse(path.read_text(encoding='utf-8'))
+def expected_checks() -> list[str]:
+    """Load reviewed requirements, never discover them from executable tests."""
+    data = json.loads(POLICY.read_text(encoding='utf-8'))
+    if type(data.get('schema')) is not int or data['schema'] != 1:
+        raise ValueError('invalid required-check policy schema')
+    if type(data.get('version')) is not int or data['version'] < 1:
+        raise ValueError('invalid required-check policy version')
+    phases = data.get('phases')
+    if not isinstance(phases, dict) or set(phases) != set(PHASES):
+        raise ValueError('required phases missing or unexpected')
     found = []
-    functions = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
-    for name in FUNCTIONS:
-        if name not in functions:
-            raise ValueError('missing suite phase: ' + name)
-        for node in ast.walk(functions[name]):
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'ok':
-                if not node.args or not isinstance(node.args[0], ast.Constant) or not isinstance(node.args[0].value, str):
-                    raise ValueError('check identities must be literal strings')
-                found.append(node.args[0].value)
-    if not found or len(set(found)) != len(found):
-        raise ValueError('empty or duplicate check manifest')
+    for name in PHASES:
+        checks = phases[name]
+        if not isinstance(checks, list) or not checks:
+            raise ValueError('empty required phase: ' + name)
+        if any(not isinstance(x, str) or not x.strip() for x in checks):
+            raise ValueError('invalid required check identity')
+        found.extend(checks)
+    if len(set(found)) != len(found):
+        raise ValueError('duplicate required check identity')
     return sorted(found)
+
+
+def policy_hash() -> str:
+    """Bind the receipt to the separate policy consumed by the validator."""
+    return hashlib.sha256(POLICY.read_bytes()).hexdigest()
 
 
 def source_hash() -> str:
@@ -50,7 +60,7 @@ def run_suite(receipt: Path, run_id: str) -> int:
     if not run_id:
         raise ValueError('empty run id')
     records = []
-    result = {'schema': 1, 'run_id': run_id, 'suite_sha256': source_hash(),
+    result = {'schema': 1, 'run_id': run_id, 'suite_sha256': source_hash(), 'policy_sha256': policy_hash(),
               'expected_checks': expected_checks(), 'checks': records,
               'completed': False, 'cleanup_returned': False,
               'skipped': [], 'error': None, 'suite_exit': 2}
@@ -104,6 +114,8 @@ def validate(receipt: Path, run_id: str, process_exit: int, expected_failure: st
     manifest = expected_checks()
     if data.get('schema') != 1 or data.get('run_id') != run_id or data.get('suite_sha256') != source_hash():
         raise ValueError('receipt identity/version mismatch')
+    if data.get('policy_sha256') != policy_hash():
+        raise ValueError('required-check policy mismatch')
     if data.get('completed') is not True or data.get('cleanup_returned') is not True or data.get('error') is not None or data.get('skipped') != []:
         raise ValueError('suite did not finish all checks and cleanup')
     rows = data.get('checks')
