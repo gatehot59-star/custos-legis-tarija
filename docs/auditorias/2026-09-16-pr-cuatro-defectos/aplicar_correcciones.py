@@ -10,6 +10,15 @@ Uso:
     python aplicar_correcciones.py               # aplica
 
 NO toca produccion, credenciales ni permisos. Solo tres archivos del backend.
+
+HISTORIA DE UNA CORRECCION MIA, que queda escrita porque importa: la primera
+version de este parche condicionaba el arranque del D4 por `modo == "corridos"`.
+Eso rompio DOS aserciones de `test_plazos.py` que ya existian, etiquetadas
+ARRANQUE-HABIL, y tenian razon: un plazo CIVIL de mas de 15 dias tambien se
+computa en dias corridos (art. 90.II Ley 439) pero su arranque sigue siendo el
+dia siguiente HABIL (art. 90.I). O sea que "corridos" no implica "arranque
+calendario": eso vale para PENAL, por el art. 130 CPP. Un test preexistente
+falso mi parche antes de que yo lo declarara verde.
 """
 import pathlib
 import sys
@@ -247,14 +256,15 @@ A4_ANTES = """    detalle: list[dict] = []
 A4_DESPUES = """    detalle: list[dict] = []
     cursor = base
     inicio: _dt.date | None = None
-    if modo == "corridos":
+    if materia is Materia.PENAL and modo == "corridos":
         # DEFECTO CORREGIDO. El arranque se buscaba HABIL para TODAS las
-        # materias, y para un plazo en dias CORRIDOS eso se come los inhabiles
-        # del principio: con notificacion del viernes el dia 1 caia el lunes.
+        # materias, y en un plazo cautelar penal -- que va en dias CORRIDOS --
+        # eso se come los inhabiles del principio: con notificacion del viernes
+        # el dia 1 caia el lunes en vez del sabado.
         #
         # Texto vigente del art. 130 CPP (Ley 1970), verificado en tres fuentes
-        # independientes y NO modificado por la Ley 1173 ni por la Ley 1226
-        # (que enumeran los articulos que tocan y el 130 no esta):
+        # independientes y NO modificado por la Ley 1173 ni por la Ley 1226 (las
+        # dos enumeran los articulos que tocan y el 130 no esta):
         #
         #   "Los plazos determinados por dias comenzaran a correr al dia
         #    siguiente de practicada la notificacion y venceran a las
@@ -264,9 +274,15 @@ A4_DESPUES = """    detalle: list[dict] = []
         #    caso en el cual se computaran dias corridos."
         #
         # Dice "al dia siguiente", NO "al dia siguiente HABIL". El dia siguiente
-        # habil es el art. 90.I de la Ley 439, que es CIVIL, y esa regla se
-        # habia extendido a penal sin fuente. En corridos el dia 1 es el dia
-        # calendario siguiente.
+        # habil es el art. 90.I de la Ley 439, que es CIVIL.
+        #
+        # POR QUE LA CONDICION EXIGE PENAL Y NO SOLO "corridos": un plazo CIVIL
+        # de mas de 15 dias tambien se computa corrido (art. 90.II Ley 439),
+        # pero su arranque sigue gobernado por el art. 90.I, o sea el dia
+        # siguiente HABIL. La primera version de este parche condicionaba solo
+        # por `modo` y rompio dos aserciones ARRANQUE-HABIL de test_plazos.py
+        # que ya existian y tenian razon. "Corridos" no implica "arranque
+        # calendario": eso es del art. 130 CPP, y el art. 130 CPP es penal.
         inicio = base + _dt.timedelta(days=1)
     else:
         for _ in range(400):
@@ -351,7 +367,7 @@ PARCHES = [
     ("api.py", "D2 ultima decision gana", A2_ANTES, A2_DESPUES),
     ("api.py", "D3 log sin requestline", A3_ANTES, A3_DESPUES),
     ("plazos.py", "D4 flag de incertidumbre", A4D_ANTES, A4D_DESPUES),
-    ("plazos.py", "D4 arranque corrido art 130 CPP", A4_ANTES, A4_DESPUES),
+    ("plazos.py", "D4 arranque corrido PENAL art 130 CPP", A4_ANTES, A4_DESPUES),
     ("plazos.py", "D4 prorroga penal incierta", A4B_ANTES, A4B_DESPUES),
     ("plazos.py", "D4 estado no confirmado", A4C_ANTES, A4C_DESPUES),
 ]
@@ -378,7 +394,8 @@ def main() -> int:
         print("\nNADA SE ESCRIBIO: un parche parcial deja el arbol sin medir.")
         return 3
     if verificar:
-        print("\nVERIFICACION OK: los 12 reemplazos matchean 1 vez. No escribi.")
+        print(f"\nVERIFICACION OK: los {len(PARCHES)} reemplazos matchean 1 vez. "
+              "No escribi.")
         return 0
     for archivo, texto in textos.items():
         (BACK / archivo).write_text(texto, encoding="utf-8")
