@@ -110,13 +110,23 @@ jobs:
           echo "privilegios de custos_app sobre tenants: ${P}"
           test "${P}" = "SELECT"
 
-      - name: FALSADOR DEL CI - con el defecto de vuelta esto DEBE dar rojo
+      # -----------------------------------------------------------------------
+      # FALSADORES DEL PROPIO CI
+      #
+      # REPARO 2 DE SOL, ACEPTADO: la version anterior de este paso consideraba
+      # exito del falsador CUALQUIER salida distinta de cero. O sea que un
+      # traceback del arnes, un fallo de PostgreSQL o un error de import contaban
+      # como "el guard funciona". Un falsador que acepta cualquier rojo no prueba
+      # que el rojo venga de lo que sabotee: prueba que algo se rompio.
+      #
+      # Ahora cada sabotaje exige LA ETIQUETA EXACTA del check que tiene que
+      # caerse. Si la suite falla por otra causa, la etiqueta no aparece y el job
+      # se cae con "rojo por la razon equivocada", que es informacion distinta de
+      # "el guard anda".
+      # -----------------------------------------------------------------------
+      - name: FALSADOR 1 - invertir el orden de decisiones DEBE romper el check D2
         run: |
           set -uo pipefail
-          # El paso anterior en verde no prueba que este workflow pueda ver un
-          # defecto: prueba que hoy no hay ninguno. Aca se reintroduce el bug
-          # del gate (aceptar cualquier aprobacion historica) y se EXIGE que la
-          # suite falle. Si pasa, el CI es decorativo y el job se cae.
           cp backend/api.py /tmp/api.py.bak
           python3 - <<'PY'
           import pathlib
@@ -124,19 +134,65 @@ jobs:
           t = p.read_text()
           viejo = '    aplicables.sort(key=_clave_decision, reverse=True)\n    ultima = aplicables[0]'
           assert t.count(viejo) == 1, "no encontre el punto a sabotear"
-          # Orden INVERTIDO: vuelve a ganar la decision mas vieja.
+          # Orden INVERTIDO: vuelve a ganar la decision mas vieja, o sea el bug.
           t = t.replace(viejo, '    aplicables.sort(key=_clave_decision)\n    ultima = aplicables[0]', 1)
           p.write_text(t)
-          print("sabotaje aplicado")
+          print("sabotaje 1 aplicado: orden de decisiones invertido")
           PY
-          if python3 backend/test_regresiones_hitl.py; then
-            echo "ROJO DEL FALSADOR: la suite paso CON el defecto puesto."
-            echo "Este CI no puede detectar el bug que dice cubrir."
-            cp /tmp/api.py.bak backend/api.py
+          set +e
+          python3 backend/test_regresiones_hitl.py > /tmp/f1.log 2>&1
+          RC=$?
+          set -e
+          cp /tmp/api.py.bak backend/api.py
+          echo "exit del sabotaje 1: ${RC}"
+          if [ "${RC}" = "0" ]; then
+            echo "ROJO DEL FALSADOR: la suite PASO con el defecto puesto."
             exit 1
           fi
-          echo "OK: con el defecto puesto la suite da rojo, o sea que discrimina"
-          cp /tmp/api.py.bak backend/api.py
+          # La etiqueta exacta del check que tiene que caerse. Sin esto, un
+          # traceback contaria como exito del falsador.
+          if ! grep -q 'ROJO D2 EL DEFECTO: tras el rechazo la accion se BLOQUEA' /tmp/f1.log; then
+            echo "ROJO POR LA RAZON EQUIVOCADA: la suite fallo, pero NO en el check"
+            echo "D2 que este sabotaje deberia romper. Ultimas lineas:"
+            tail -25 /tmp/f1.log
+            exit 1
+          fi
+          echo "OK: el sabotaje del orden rompe exactamente el check D2"
+
+      - name: FALSADOR 2 - sacar la igualdad de caso DEBE romper el check del caso
+        run: |
+          set -uo pipefail
+          # Este falsador nace del reparo 1 de Sol: una accion SIN case_id
+          # heredaba una aprobacion atada a un caso. Si alguien saca
+          # `_mismo_caso`, el check correspondiente tiene que caerse.
+          cp backend/api.py /tmp/api.py.bak2
+          python3 - <<'PY'
+          import pathlib
+          p = pathlib.Path("backend/api.py")
+          t = p.read_text()
+          viejo = '                  and _mismo_caso(ev)]'
+          assert t.count(viejo) == 1, "no encontre el filtro de caso"
+          t = t.replace(viejo, '                  ]', 1)
+          p.write_text(t)
+          print("sabotaje 2 aplicado: filtro de caso removido")
+          PY
+          set +e
+          python3 backend/test_regresiones_hitl.py > /tmp/f2.log 2>&1
+          RC=$?
+          set -e
+          cp /tmp/api.py.bak2 backend/api.py
+          echo "exit del sabotaje 2: ${RC}"
+          if [ "${RC}" = "0" ]; then
+            echo "ROJO DEL FALSADOR: la suite PASO sin la igualdad de caso."
+            exit 1
+          fi
+          if ! grep -q 'ROJO CASO' /tmp/f2.log; then
+            echo "ROJO POR LA RAZON EQUIVOCADA: la suite fallo, pero NO en un check"
+            echo "del caso. Ultimas lineas:"
+            tail -25 /tmp/f2.log
+            exit 1
+          fi
+          echo "OK: sacar la igualdad de caso rompe exactamente los checks del caso"
 
       - name: el arbol quedo sin modificar
         run: |
