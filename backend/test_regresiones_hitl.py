@@ -9,6 +9,13 @@ Y cada arreglo trae su FALSADOR: se vuelve a poner el defecto y se exige ROJO.
 Un test que no puede fallar cuando el bug vuelve no es una regresion, es
 decoracion.
 
+LAS ETIQUETAS SON PARTE DEL CONTRATO. El workflow `api-e2e.yml` sabotea el
+codigo y despues hace `grep` de la etiqueta del check que TIENE que caerse. Ese
+es el reparo 2 de Sol: antes el CI aceptaba cualquier exit distinto de cero, asi
+que un traceback contaba como "el guard funciona". Si se renombra un check con
+prefijo `D2` o `CASO`, hay que actualizar el workflow o el falsador deja de
+discriminar.
+
 Corre contra PostgreSQL real si hay `DATABASE_URL`/`DATABASE_URL_APP` en el
 entorno; si no, corre la parte que no necesita base y declara NO MEDIDO el
 resto. NO se sustituye por SQLite: SQLite no tiene RLS y el defecto 1 ERA de
@@ -367,6 +374,41 @@ def regresiones_con_postgres(dsn_admin, dsn_app):
             ok("D2 otro tipo de accion: 403", st, 403)
             st, _ = pedir(port, "POST", "/acciones/externa", payload, token_b)
             ok("D2 la aprobacion de A no sirve para B: 403", st, 403)
+
+            # --- REPARO 1 DE SOL: el CASO es parte de la identidad -------
+            # Su hallazgo estatico: el almacen filtra por caso solo si el
+            # argumento es truthy, y el gate no volvia a exigir igualdad. Medido
+            # por HTTP ANTES del arreglo: una accion SIN caso HEREDABA (200) una
+            # aprobacion atada al caso 1; de OTRO caso NO heredaba (403), asi que
+            # su hallazgo estatico era mas amplio que lo que la medicion sostiene.
+            #
+            # Las etiquetas de estos cuatro arrancan con "CASO" a proposito: el
+            # falsador del CI hace grep de esa etiqueta, asi que un traceback o
+            # un fallo de infraestructura NO cuenta como "el guard funciona".
+            # FALSADO localmente: sacando `_mismo_caso` de api.py, el check
+            # "CASO una accion SIN caso" da ROJO con 200. Discrimina.
+            st, otro = pedir(port, "POST", "/casos",
+                             {"nro_expediente": "REGR-002",
+                              "juzgado": "Juzgado de regresion",
+                              "materia": "civil"}, token)
+            cid2 = otro.get("id")
+            ok("CASO el segundo expediente se creo (si no, no se puede medir)",
+               bool(cid2 and cid2 != cid), True)
+            st, _ = pedir(port, "POST", "/acciones/externa",
+                          {"tipo": "presentar_escrito", "contenido": contenido,
+                           "case_id": cid2}, token)
+            ok("CASO la aprobacion del caso 1 NO sirve para el caso 2", st, 403)
+            st, _ = pedir(port, "POST", "/acciones/externa",
+                          {"tipo": "presentar_escrito",
+                           "contenido": contenido}, token)
+            ok("CASO una accion SIN caso NO hereda la aprobacion del caso 1",
+               st, 403)
+            # CONTROL POSITIVO del arreglo: con el caso correcto sigue en 200. Si
+            # este se cayera, el arreglo habria roto el camino legitimo, que es
+            # la forma mas facil de "cerrar" un agujero y romper el producto.
+            st, _ = pedir(port, "POST", "/acciones/externa", payload, token)
+            ok("CASO con el caso correcto sigue autorizando (control positivo)",
+               st, 200)
 
             # --- D3: el log no puede traer la consulta -------------------
             st, _ = pedir(port, "GET", f"/buscar?q={CANARIO}", token=token)
