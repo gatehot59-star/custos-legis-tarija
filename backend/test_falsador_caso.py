@@ -1,34 +1,7 @@
-"""Regression for the actual FALSADOR 2 shell step, not a duplicate predicate.
-
-Run: python3 backend/test_falsador_caso.py
-Only stdlib and bash. Each scenario uses a temporary backend copy, preserves
-its real assertion helper, and replaces the suite entrypoint with a controlled
-outcome. No database, network, credentials or production writes are required.
-The historical broad 'ROJO CASO' predicate must fail this regression.
-
-SCOPE ADDED AFTER MEASUREMENT (Brain, on top of Sol's five scenarios).
-Measured with this same test against the three workflow versions:
-
-  scenario                     broad grep   Sol's exact line   + red count
-  contaminated_experiment         FAIL            FAIL              ok
-  broken_positive_control         FAIL             ok               ok
-
-  * CONTAMINATED EXPERIMENT was a real gap left open by the exact-line fix: when
-    the suite emits the target red AND the fixture red, the grep still matches
-    and the step exits 0. Not hypothetical: with a null case_id the "other case"
-    check sends the very same payload as the target one, so the red stops being
-    attributable to the sabotage. A falsifier that claims one defect must observe
-    exactly one red. The expected count is 1 because it was measured, not
-    assumed: each sabotage yields 44 greens and 1 red against real PostgreSQL.
-  * BROKEN POSITIVE CONTROL was already closed by the exact-line fix. It was a
-    gap of the ORIGINAL broad prefix, where breaking the legitimate path counted
-    as proof the sabotage worked, which is backwards. It stays as a regression
-    against ever going back to a family-wide predicate, and it is NOT a repair of
-    Sol's work: an earlier version of this docstring claimed both were, and that
-    attribution was wrong.
+"""Permanent receipt regressions against the actual FALSADOR 2 shell step.
+Controlled suite main replaces only execution, not its real manifest/helper.
+No PostgreSQL or network. Run: python3 backend/test_falsador_caso.py.
 """
-from __future__ import annotations
-
 import ast
 import os
 from pathlib import Path
@@ -38,129 +11,83 @@ import subprocess
 import tempfile
 import textwrap
 import unittest
+import suite_receipt as receipt
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKFLOW = ROOT / '.github/workflows/api-e2e.yml'
-EXPECTED = 'CASO una accion SIN caso NO hereda la aprobacion del caso 1'
+TARGET = 'CASO una accion SIN caso NO hereda la aprobacion del caso 1'
 FIXTURE = 'CASO el segundo expediente se creo (si no, no se puede medir)'
-POSITIVE = 'CASO con el caso correcto sigue autorizando (control positivo)'
 
 
-def read_step(workflow: Path) -> str:
-    """Extract exactly one FALSADOR 2 block; format drift fails closed."""
-    text = workflow.read_text(encoding='utf-8')
-    sections = re.split(r'^      - name: ', text, flags=re.MULTILINE)
-    matches = [s for s in sections if s.startswith('FALSADOR 2 - ')]
-    if len(matches) != 1:
-        raise ValueError('expected exactly one FALSADOR 2 workflow step')
-    marker = '        run: |\n'
-    if matches[0].count(marker) != 1:
-        raise ValueError('FALSADOR 2 must have one inline run block')
-    body = textwrap.dedent(matches[0].split(marker, 1)[1]).rstrip() + '\n'
-    if '${{' in body:
-        raise ValueError('unsupported GitHub expression in executable step')
-    for path in ('/tmp/api.py.bak2', '/tmp/f2.log'):
-        if path not in body:
-            raise ValueError('temporary path contract changed: ' + path)
-    return body
+def complete(failures, tail=''):
+    """Generate a synthetic normal return with all real check identities."""
+    return (f'for label in {receipt.expected_checks()!r}:\n'
+            f'    ok(label, 200 if label in {failures!r} else 403, 403)\n'
+            + tail + f'return {int(bool(failures))}\n')
 
 
-def inject_entrypoint(original: str, statement: str) -> str:
-    """Keep real imports/helpers and replace only the final main guard."""
-    tree = ast.parse(original)
-    last = tree.body[-1]
-    if not isinstance(last, ast.If) or ast.unparse(last.test) != "__name__ == '__main__'":
-        raise ValueError('suite must end with its main guard')
-    for label in (EXPECTED, FIXTURE, POSITIVE):
-        if label not in original:
-            raise ValueError('suite assertion label missing: ' + label)
-    prefix = '\n'.join(original.splitlines()[:last.lineno - 1]) + '\n'
-    return prefix + statement
+class CompletionRegression(unittest.TestCase):
+    """Reject incomplete, stale and contaminated evidence; accept valid control."""
+
+    def scenario(self, body, fault=None):
+        """Exercise the real step in a fresh temporary source copy."""
+        text = (ROOT/'.github/workflows/api-e2e.yml').read_text()
+        blocks = [b for b in re.split(r'^      - name: ', text, flags=re.M)
+                  if b.startswith('FALSADOR 2 - ')]
+        self.assertEqual(len(blocks), 1)
+        step = textwrap.dedent(blocks[0].split('        run: |\n', 1)[1])
+        with tempfile.TemporaryDirectory(prefix='custos-receipt-') as tmp:
+            p = Path(tmp)
+            shutil.copytree(ROOT/'backend', p/'backend', ignore=shutil.ignore_patterns('__pycache__'))
+            suite = p/'backend/test_regresiones_hitl.py'
+            source = suite.read_text(); lines = source.splitlines(keepends=True)
+            main = next(n for n in ast.parse(source).body
+                        if isinstance(n, ast.FunctionDef) and n.name == 'main')
+            suite.write_text(''.join(lines[:main.lineno-1]) + 'def main():\n'
+                             + textwrap.indent(body, '    ') + '\n'
+                             + ''.join(lines[main.end_lineno:]))
+            before = (p/'backend/api.py').read_bytes()
+            step = step.replace('/tmp/api.py.bak2',str(p/'backup')).replace('/tmp/f2.log',str(p/'log'))
+            if fault:
+                ops={'missing':'rm -f "$RECEIPT"', 'stale':'RUN_ID="other-run"',
+                     'malformed':"printf '{broken' > \"$RECEIPT\""}
+                needle='python3 backend/suite_receipt.py validate'
+                self.assertIn(needle,step)
+                step=step.replace(needle,ops[fault]+'\n'+needle,1)
+            (p/'step.sh').write_text(step)
+            env=dict(os.environ,TMPDIR=tmp)
+            for k in ['DATABASE_URL','DATABASE_URL_APP','PYTHONPATH','BASH_ENV','ENV']:
+                env.pop(k,None)
+            r=subprocess.run(['bash','--noprofile','--norc','-e','-o','pipefail',str(p/'step.sh')],
+                             cwd=p,env=env,text=True,capture_output=True,timeout=30)
+            self.assertIn('sabotaje 2 aplicado',r.stdout,r.stdout+r.stderr)
+            self.assertEqual((p/'backend/api.py').read_bytes(),before)
+            return r
+
+    def test_receipt_contract(self):
+        """Fifteen outcomes discriminate completion from matching log output."""
+        scenarios=[
+            ('complete_target',complete([TARGET]),None,True),
+            ('target_then_crash',f'ok({TARGET!r},200,403)\nraise RuntimeError("after target")\n',None,False),
+            ('cleanup_crash',complete([TARGET],'raise RuntimeError("cleanup")\n'),None,False),
+            ('partial_return',f'ok({TARGET!r},200,403)\nreturn 1\n',None,False),
+            ('fixture_only',complete([FIXTURE]),None,False),
+            ('contaminated',complete([TARGET,FIXTURE]),None,False),
+            ('positive_broken',complete(['CASO con el caso correcto sigue autorizando (control positivo)']),None,False),
+            ('traceback','raise RuntimeError("setup")\n',None,False),
+            ('no_failure',complete([]),None,False),
+            ('abnormal_exit',complete([TARGET],'raise SystemExit(2)\n'),None,False),
+            ('missing',complete([TARGET]),'missing',False),
+            ('stale',complete([TARGET]),'stale',False),
+            ('malformed',complete([TARGET]),'malformed',False),
+            ('duplicate',complete([TARGET],f'ok({TARGET!r},200,403)\n'),None,False),
+            ('skipped',complete([TARGET],'NO_MEDIDO.append("database unavailable")\n'),None,False),
+        ]
+        for name,body,fault,accepted in scenarios:
+            with self.subTest(name=name):
+                r=self.scenario(body,fault)
+                print(f'{name}: step_exit={r.returncode}, expected_accept={accepted}')
+                self.assertEqual(r.returncode==0,accepted,r.stdout+r.stderr)
 
 
-class FalsadorCasoRegression(unittest.TestCase):
-    """Exercise the workflow's subprocess/exit-code/log consumer end to end."""
-
-    def run_scenario(self, statement: str) -> subprocess.CompletedProcess[str]:
-        """Run the actual step in isolation and verify mutation restoration."""
-        self.assertIsNotNone(shutil.which('bash'), 'bash is required, never skip')
-        step = read_step(WORKFLOW)
-        with tempfile.TemporaryDirectory(prefix='custos-falsador-test-') as tmp:
-            folder = Path(tmp)
-            backend = folder / 'backend'
-            backend.mkdir()
-            for source in (ROOT / 'backend').glob('*.py'):
-                shutil.copyfile(source, backend / source.name)
-            suite = backend / 'test_regresiones_hitl.py'
-            suite.write_text(inject_entrypoint(suite.read_text(encoding='utf-8'), statement), encoding='utf-8')
-            original_api = (backend / 'api.py').read_bytes()
-            step = step.replace('/tmp/api.py.bak2', str(folder / 'api.py.bak2'))
-            step = step.replace('/tmp/f2.log', str(folder / 'f2.log'))
-            script = folder / 'step.sh'
-            script.write_text(step, encoding='utf-8')
-            env = dict(os.environ)
-            for key in ('DATABASE_URL', 'DATABASE_URL_APP', 'PYTHONPATH', 'BASH_ENV', 'ENV'):
-                env.pop(key, None)
-            result = subprocess.run(
-                ['bash', '--noprofile', '--norc', '-e', '-o', 'pipefail', str(script)],
-                cwd=folder, env=env, capture_output=True, text=True, timeout=30,
-            )
-            self.assertIn('sabotaje 2 aplicado', result.stdout, result.stdout + result.stderr)
-            self.assertEqual((backend / 'api.py').read_bytes(), original_api, 'step did not restore api.py')
-            return result
-
-    def test_fixture_failure_is_not_a_detected_regression(self):
-        """Historical false positive: setup assertion alone must reject."""
-        result = self.run_scenario(f'ok({FIXTURE!r}, False, True)\nraise SystemExit(1)\n')
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-
-    def test_unrelated_traceback_is_rejected(self):
-        """An import/setup-style crash cannot validate the mutation."""
-        result = self.run_scenario('raise RuntimeError("controlled unrelated crash")\n')
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-
-    def test_successful_suite_is_rejected(self):
-        """If the sabotaged suite passes, the falsifier must fail."""
-        result = self.run_scenario('raise SystemExit(0)\n')
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-
-    def test_expected_assertion_with_exit_one_is_accepted(self):
-        """Positive control: never replace the falsifier by always-fail."""
-        result = self.run_scenario(f'ok({EXPECTED!r}, 200, 403)\nraise SystemExit(1)\n')
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
-    def test_expected_label_with_abnormal_exit_is_rejected(self):
-        """A label cannot excuse an abnormal suite termination."""
-        result = self.run_scenario(f'ok({EXPECTED!r}, 200, 403)\nraise SystemExit(2)\n')
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-
-    def test_contaminated_experiment_is_rejected(self):
-        """Target red plus a fixture red must NOT count as a clean detection.
-
-        MEASURED GAP of the exact-line predicate: the grep matched and the step
-        exited 0, so a broken experiment was reported as a working guard. With a
-        null case_id the other-case check sends the same payload as the target,
-        so the red is no longer attributable to the sabotage.
-        """
-        result = self.run_scenario(
-            f'ok({FIXTURE!r}, False, True)\n'
-            f'ok({EXPECTED!r}, 200, 403)\n'
-            'raise SystemExit(1)\n')
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn('CONTAMINADO', result.stdout, result.stdout)
-
-    def test_broken_positive_control_is_rejected(self):
-        """Breaking the legitimate path is the opposite of a working sabotage.
-
-        Measured: the exact-line predicate ALREADY rejects this, so it is not a
-        gap of that fix. It was a gap of the original broad prefix, which
-        celebrated the sabotage precisely when it had destroyed the path that
-        must keep working. Kept as a regression against reintroducing any
-        family-wide predicate.
-        """
-        result = self.run_scenario(f'ok({POSITIVE!r}, 403, 200)\nraise SystemExit(1)\n')
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-
-
-if __name__ == '__main__':
+if __name__=='__main__':
     unittest.main(verbosity=2)
