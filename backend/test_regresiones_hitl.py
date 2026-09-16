@@ -22,11 +22,7 @@ TRES DEFECTOS DE ESTE ARCHIVO, cazados en sus propias corridas y arreglados:
   2. la limpieza hacia DELETE sobre `users` y violaba la FK
      `aprobaciones_usuario_id_fkey`: la evidencia apunta al abogado que firmo.
   3. borrar el TENANT esperando que cascadee tampoco funciona, y eso resulto ser
-     un HALLAZGO del producto, no un bug mio: el trigger
-     `app.aprobacion_inmutable()` rechaza el DELETE incluso cuando llega por
-     `ON DELETE CASCADE`. O sea que un bufete con aprobaciones NO SE PUEDE
-     BORRAR. Se mide como control positivo del guard y los datos sinteticos
-     quedan declarados en vez de forzar el borrado desactivando triggers.
+     un HALLAZGO del producto, no un bug mio. Ver `cerrar_fixtures`.
 """
 import contextlib
 import datetime as _dt
@@ -213,33 +209,51 @@ def sembrar_postgres(dsn_admin):
 def cerrar_fixtures(dsn_admin, ids, slugs):
     """Intenta borrar el bufete sintetico y MIDE lo que pasa.
 
-    No es limpieza a cualquier precio: el trigger `app.aprobacion_inmutable()`
-    rechaza el DELETE de una aprobacion INCLUSO cuando llega por el
-    `ON DELETE CASCADE` de `tenants`. Eso hace que un bufete con aprobaciones
-    no se pueda borrar, y es informacion del producto que vale mas que dejar la
-    base prolija. NO se desactivan triggers ni se eleva el rol para forzarlo:
-    eso seria sabotear el guard que estoy midiendo.
+    No es limpieza a cualquier precio: un bufete con aprobaciones NO se puede
+    borrar, y eso es la decision del 2026-09-16, no un descuido. Hay DOS
+    barreras independientes y este check acepta cualquiera de las dos, pero
+    exige que ALGUNA frene:
+
+      `ForeignKeyViolation`  la FK `aprobaciones_tenant_id_fkey` es RESTRICT, asi
+                             que el motor rechaza en `tenants` y nombra la tabla
+                             que retiene. Es la barrera nueva y la que da el
+                             mensaje claro.
+      `RaiseException`       el trigger `app.aprobacion_inmutable()`, que sigue
+                             ahi a proposito: si manana alguien vuelve la FK a
+                             CASCADE, esta barrera todavia frena.
+
+    Aceptar las dos NO es aflojar el criterio: el criterio es "queda bloqueado".
+    Fijar UNA clase de error hacia que el test dependiera de si la migracion ya
+    estaba aplicada, y un test que solo pasa la primera vez no es una regresion.
+
+    NO se desactivan triggers ni se eleva el rol para forzar la limpieza: eso
+    seria sabotear el guard que estoy midiendo.
     """
     import psycopg
     bloqueado = False
+    barrera = "NINGUNA"
     mensaje = ""
     try:
         with psycopg.connect(dsn_admin, autocommit=True) as c:
             c.execute("DELETE FROM tenants WHERE id = ANY(%s::uuid[])",
                       ([ids["A"], ids["B"]],))
-    except psycopg.errors.RaiseException as e:
-        bloqueado = True
+    except psycopg.errors.ForeignKeyViolation as e:
+        bloqueado, barrera = True, "FK RESTRICT"
         mensaje = str(e).splitlines()[0]
-    ok("GUARD: el trigger de inmutabilidad bloquea el DELETE en cascada",
-       bloqueado, True)
+    except psycopg.errors.RaiseException as e:
+        bloqueado, barrera = True, "trigger de inmutabilidad"
+        mensaje = str(e).splitlines()[0]
+    ok("GUARD: borrar un bufete con aprobaciones queda BLOQUEADO", bloqueado,
+       True)
+    di("       barrera que actuo: " + barrera)
     if bloqueado:
         di("       verbatim: " + mensaje)
         CONSERVADO.append(
             "bufetes sinteticos " + ", ".join(slugs.values()) + " quedan en la "
-            "base: el trigger de inmutabilidad no permite borrarlos porque "
-            "tienen aprobaciones. Cada corrida usa UUID y slug nuevos, asi que "
-            "el test es repetible; la base acumula fixtures y eso hay que "
-            "resolverlo con una decision de producto, no desactivando el guard")
+            "base: tienen aprobaciones y por decision no se borran. Cada corrida "
+            "usa UUID y slug nuevos, asi que el test es repetible; el purgado "
+            "deliberado esta documentado en "
+            "infra/2026-09-16-cierra-el-borrado-de-un-bufete.sql")
 
 
 def regresiones_con_postgres(dsn_admin, dsn_app):
