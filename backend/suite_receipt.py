@@ -1,10 +1,4 @@
-"""Completion receipts for the Custos regression suite (stdlib only).
-
-Runner emits an atomic receipt after main and its cleanup return. Exceptions,
-skips, missing/duplicate checks, stale run ids and abnormal exits fail closed.
-This detects accidental incomplete runs, not a malicious suite forging evidence.
-"""
-from __future__ import annotations
+# In-process phase supervisor, not a malicious-code security boundary.
 import argparse
 import hashlib
 import importlib.util
@@ -14,145 +8,133 @@ from pathlib import Path
 import sys
 import tempfile
 import traceback
-
-SUITE = Path(__file__).with_name('test_regresiones_hitl.py')
-POLICY = Path(__file__).with_name('required_checks.json')
-PHASES = ('regresion_plazo_penal', 'regresiones_con_postgres', 'cerrar_fixtures')
-
-
-def expected_checks() -> list[str]:
-    """Load reviewed requirements, never discover them from executable tests."""
-    data = json.loads(POLICY.read_text(encoding='utf-8'))
-    if type(data.get('schema')) is not int or data['schema'] != 1:
-        raise ValueError('invalid required-check policy schema')
-    if type(data.get('version')) is not int or data['version'] < 1:
-        raise ValueError('invalid required-check policy version')
-    phases = data.get('phases')
-    if not isinstance(phases, dict) or set(phases) != set(PHASES):
-        raise ValueError('required phases missing or unexpected')
-    found = []
-    for name in PHASES:
-        checks = phases[name]
-        if not isinstance(checks, list) or not checks:
-            raise ValueError('empty required phase: ' + name)
-        if any(not isinstance(x, str) or not x.strip() for x in checks):
-            raise ValueError('invalid required check identity')
-        found.extend(checks)
-    if len(set(found)) != len(found):
-        raise ValueError('duplicate required check identity')
-    return sorted(found)
-
-
-def policy_hash() -> str:
-    """Bind the receipt to the separate policy consumed by the validator."""
-    return hashlib.sha256(POLICY.read_bytes()).hexdigest()
-
-
-def source_hash() -> str:
-    """Bind the receipt to the regression suite version, not the mutated API."""
-    return hashlib.sha256(SUITE.read_bytes()).hexdigest()
-
-
-def run_suite(receipt: Path, run_id: str) -> int:
-    """Run the unmodified suite and publish completion only after normal return."""
-    if receipt.exists():
-        raise FileExistsError('refusing to overwrite an existing receipt')
-    if not run_id:
-        raise ValueError('empty run id')
-    records = []
-    result = {'schema': 1, 'run_id': run_id, 'suite_sha256': source_hash(), 'policy_sha256': policy_hash(),
-              'expected_checks': expected_checks(), 'checks': records,
-              'completed': False, 'cleanup_returned': False,
-              'skipped': [], 'error': None, 'suite_exit': 2}
-    code = 2
+SUITE=Path(__file__).with_name("test_regresiones_hitl.py")
+POLICY=Path(__file__).with_name("required_checks.json")
+PHASES=("regresion_plazo_penal","regresiones_con_postgres","cerrar_fixtures")
+def required_phases():
+    data=json.loads(POLICY.read_text())
+    if data.get("schema")!=1 or type(data.get("version")) is not int or data["version"]<1:
+        raise ValueError("invalid policy version")
+    phases=data.get("phases")
+    if not isinstance(phases,dict) or set(phases)!=set(PHASES):
+        raise ValueError("missing required phases")
+    seen=set()
+    for phase in PHASES:
+        ids=phases[phase]
+        if not isinstance(ids,list) or not ids: raise ValueError("empty required phase")
+        for ident in ids:
+            if not isinstance(ident,str) or not ident.strip() or ident in seen:
+                raise ValueError("invalid or duplicate identity")
+            seen.add(ident)
+    return {p:sorted(phases[p]) for p in PHASES}
+def expected_checks():
+    return sorted(x for ids in required_phases().values() for x in ids)
+def source_hash(): return hashlib.sha256(SUITE.read_bytes()).hexdigest()
+def policy_hash(): return hashlib.sha256(POLICY.read_bytes()).hexdigest()
+def atomic_write(path,data):
+    fd,tmp=tempfile.mkstemp(prefix=".receipt-",dir=path.parent)
     try:
-        spec = importlib.util.spec_from_file_location('custos_receipt_suite', SUITE)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        original = module.ok
-        def record(label, actual, expected):
-            passed = original(label, actual, expected)
-            records.append({'id': label, 'passed': bool(passed)})
-            return passed
-        module.ok = record
-        code = module.main()
-        if type(code) is not int or code not in (0, 1):
-            raise ValueError('unexpected suite return value')
-        result['skipped'] = list(module.NO_MEDIDO)
-        result['suite_exit'] = code
-        identities = [x['id'] for x in records]
-        complete = sorted(identities) == result['expected_checks'] and not result['skipped']
-        result['completed'] = complete
-        # main returned past the PostgreSQL function's finally/fixture cleanup.
-        result['cleanup_returned'] = complete
-        if not complete:
-            result['error'] = 'incomplete check manifest or skipped PostgreSQL phase'
-            code = 2
-    except BaseException as exc:
-        result['error'] = type(exc).__name__ + ': ' + str(exc)
-        result['suite_exit'] = 2
-        traceback.print_exc()
-        code = 2
+        with os.fdopen(fd,"w") as f:
+            json.dump(data,f,ensure_ascii=False,indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp,path)
     finally:
-        result['process_exit'] = code
-        fd, name = tempfile.mkstemp(prefix='.receipt-', dir=receipt.parent)
-        try:
-            with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                json.dump(result, f, ensure_ascii=False, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(name, receipt)
-        finally:
-            if os.path.exists(name):
-                os.unlink(name)
-    return code
-
-
-def validate(receipt: Path, run_id: str, process_exit: int, expected_failure: str | None) -> None:
-    """Require completed phases, exact identity set and only the intended failure."""
-    data = json.loads(receipt.read_text(encoding='utf-8'))
-    manifest = expected_checks()
-    if data.get('schema') != 1 or data.get('run_id') != run_id or data.get('suite_sha256') != source_hash():
-        raise ValueError('receipt identity/version mismatch')
-    if data.get('policy_sha256') != policy_hash():
-        raise ValueError('required-check policy mismatch')
-    if data.get('completed') is not True or data.get('cleanup_returned') is not True or data.get('error') is not None or data.get('skipped') != []:
-        raise ValueError('suite did not finish all checks and cleanup')
-    rows = data.get('checks')
-    if not isinstance(rows, list) or any(not isinstance(x, dict) or type(x.get('passed')) is not bool for x in rows):
-        raise ValueError('invalid check records')
-    if sorted(x.get('id', '') for x in rows) != manifest or data.get('expected_checks') != manifest:
-        raise ValueError('missing, duplicate or unexpected checks')
-    failures = sorted(x['id'] for x in rows if not x['passed'])
-    required = [] if expected_failure is None else [expected_failure]
-    if failures != required:
-        raise ValueError('unexpected failures: ' + repr(failures))
-    wanted_exit = 0 if expected_failure is None else 1
-    if process_exit != wanted_exit or data.get('process_exit') != wanted_exit or data.get('suite_exit') != wanted_exit:
-        raise ValueError('exit code inconsistent with completed receipt')
-
-
-def main() -> int:
-    """CLI for run and validation, with explicit paths and per-execution ids."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode', choices=['run', 'validate'])
-    parser.add_argument('--receipt', required=True, type=Path)
-    parser.add_argument('--run-id', required=True)
-    parser.add_argument('--exit-code', type=int)
-    parser.add_argument('--expect')
-    args = parser.parse_args()
+        if os.path.exists(tmp): os.unlink(tmp)
+def run_suite(receipt,run_id):
+    if receipt.exists() or not run_id: raise ValueError("fresh path and run id required")
+    required=required_phases()
+    rows=[]
+    phases=[dict(id=p,entered=False,returned=False,error=None) for p in PHASES]
+    data=dict(schema=2,run_id=run_id,suite_sha256=source_hash(),policy_sha256=policy_hash(),required_phases=required,checks=rows,phases=phases,events=[],errors=[],skipped=[],setup_completed=False,completed=False,cleanup_returned=False,process_exit=2)
+    active=None
+    module=None
+    def observe(label,actual,expected):
+        if active is None: raise RuntimeError("check outside supervised phase")
+        passed=bool(actual==expected)
+        rows.append(dict(id=label,phase=active,passed=passed))
+        original_ok(label,actual,expected)
+        return passed
+    def invoke(index,function,*args):
+        nonlocal active
+        phase=phases[index]
+        phase["entered"]=True
+        active=phase["id"]
+        data["events"].append(dict(phase=active,event="enter"))
+        try: function(*args)
+        except BaseException as exc:
+            phase["error"]=type(exc).__name__+": "+str(exc)
+            data["errors"].append(dict(phase=active,error=phase["error"]))
+            data["events"].append(dict(phase=active,event="error"))
+            traceback.print_exc()
+            return False
+        else:
+            phase["returned"]=True
+            data["events"].append(dict(phase=active,event="return"))
+            return True
+        finally: active=None
     try:
-        if args.mode == 'run':
-            return run_suite(args.receipt, args.run_id)
-        if args.exit_code is None:
-            raise ValueError('validation requires observed exit code')
-        validate(args.receipt, args.run_id, args.exit_code, args.expect)
-        print('RECEIPT VERIFIED: complete suite and exact expected failures')
+        spec=importlib.util.spec_from_file_location("custos_supervised_suite",SUITE)
+        module=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        functions=tuple(getattr(module,p) for p in PHASES)
+        original_ok=module.ok
+        module.ok=observe
+        if invoke(0,functions[0]):
+            admin=os.environ.get("DATABASE_URL")
+            app=os.environ.get("DATABASE_URL_APP")
+            if not admin or not app: data["skipped"].append("PostgreSQL credentials absent")
+            else:
+                fixtures=module.sembrar_postgres(admin)
+                if not isinstance(fixtures,tuple) or len(fixtures)!=2: raise ValueError("invalid fixture handle")
+                data["setup_completed"]=True
+                try: invoke(1,functions[1],admin,app,fixtures)
+                finally: invoke(2,functions[2],admin,*fixtures)
+    except BaseException as exc:
+        data["errors"].append(dict(phase="setup/import",error=type(exc).__name__+": "+str(exc)))
+        traceback.print_exc()
+    finally:
+        if module is not None: data["skipped"].extend(list(getattr(module,"NO_MEDIDO",[])))
+        covered=all(sorted(x["id"] for x in rows if x["phase"]==p)==required[p] for p in PHASES)
+        data["cleanup_returned"]=phases[2]["returned"]
+        data["completed"]=data["setup_completed"] and all(p["returned"] for p in phases) and covered and not data["errors"] and not data["skipped"]
+        code=int(any(not x["passed"] for x in rows)) if data["completed"] else 2
+        data["process_exit"]=code
+        atomic_write(receipt,data)
+    return code
+def validate(receipt,run_id,process_exit,expected_failure):
+    data=json.loads(receipt.read_text())
+    required=required_phases()
+    if data.get("schema")!=2 or data.get("run_id")!=run_id: raise ValueError("receipt identity mismatch")
+    if data.get("suite_sha256")!=source_hash() or data.get("policy_sha256")!=policy_hash(): raise ValueError("source or policy hash mismatch")
+    if data.get("required_phases")!=required: raise ValueError("phase policy mismatch")
+    if any(data.get(k) is not True for k in ("completed","cleanup_returned","setup_completed")) or data.get("errors")!=[] or data.get("skipped")!=[]: raise ValueError("suite phases did not complete")
+    wanted=[dict(id=p,entered=True,returned=True,error=None) for p in PHASES]
+    events=[e for p in PHASES for e in (dict(phase=p,event="enter"),dict(phase=p,event="return"))]
+    if data.get("phases")!=wanted or data.get("events")!=events: raise ValueError("missing phase entry or return")
+    rows=data.get("checks")
+    if not isinstance(rows,list) or any(not isinstance(x,dict) or type(x.get("passed")) is not bool or x.get("phase") not in PHASES or not isinstance(x.get("id"),str) for x in rows): raise ValueError("invalid check records")
+    for phase in PHASES:
+        if sorted(x["id"] for x in rows if x["phase"]==phase)!=required[phase]: raise ValueError("missing duplicate or misplaced phase checks")
+    failures=sorted(x["id"] for x in rows if not x["passed"])
+    if failures!=([] if expected_failure is None else [expected_failure]): raise ValueError("unexpected failures: "+repr(failures))
+    wanted_exit=int(expected_failure is not None)
+    if process_exit!=wanted_exit or data.get("process_exit")!=wanted_exit: raise ValueError("exit inconsistent with completion")
+def main():
+    p=argparse.ArgumentParser()
+    p.add_argument("mode",choices=["run","validate"])
+    p.add_argument("--receipt",type=Path,required=True)
+    p.add_argument("--run-id",required=True)
+    p.add_argument("--exit-code",type=int)
+    p.add_argument("--expect")
+    a=p.parse_args()
+    try:
+        if a.mode=="run": return run_suite(a.receipt,a.run_id)
+        if a.exit_code is None: raise ValueError("observed exit required")
+        validate(a.receipt,a.run_id,a.exit_code,a.expect)
+        print("RECEIPT VERIFIED: required phases entered and returned with exact checks")
         return 0
     except Exception as exc:
-        print('RECEIPT REJECTED: ' + str(exc), file=sys.stderr)
+        print("RECEIPT REJECTED: "+str(exc),file=sys.stderr)
         return 2
-
-
-if __name__ == '__main__':
-    raise SystemExit(main())
+if __name__=="__main__": raise SystemExit(main())
