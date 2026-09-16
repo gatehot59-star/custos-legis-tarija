@@ -5,6 +5,13 @@ No es un instalador portable: usa el cluster que ya existe en el directorio de
 la auditoria de integracion. Para repetir en otra maquina hay que preparar otro
 cluster. Nunca contra produccion.
 
+OJO CON UNA COSA: este arnes reaplica `infra/init.sql` en cada corrida, y ese
+archivo trae `GRANT ... ON ALL TABLES`, asi que RESTAURA los privilegios amplios
+de `custos_app`. La migracion `2026-09-16-cierra-el-borrado-de-un-bufete.sql` la
+aplica `test_borrado_bufete.py`, que por eso puede medir el ANTES y el DESPUES
+en la misma corrida. No es casualidad: es lo que hace que ese control positivo
+siga siendo valido la segunda vez.
+
 Uso:
     python verificar.py <ROOT>          # ROOT = dir con pgdata/ socket/ repo/
 """
@@ -28,7 +35,7 @@ DSN_ADMIN = f"host={SOCK} dbname=postgres user=audit_admin"
 DSN_APP = f"host={SOCK} dbname=postgres user=custos_app"
 SUITES = ["test_api.py", "guard_esquema.py", "test_rls.py", "test_plazos.py",
           "test_anonimizador.py", "test_calendario.py",
-          "test_regresiones_hitl.py"]
+          "test_regresiones_hitl.py", "test_borrado_bufete.py"]
 
 out = {"arnes": "verificacion del PR de los cuatro defectos", "root": str(ROOT),
        "started_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
