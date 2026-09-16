@@ -1,0 +1,234 @@
+{
+  "candidate_sha": "24e2490442e872498b61a8534dbfe714922fdf3e",
+  "verifier_sha256": "516b5f4757ccc2eade0cee4a7f5875075f6dd281d12168bb111b8459f0e14939",
+  "scope": "separate verifier process, actual api.py entrypoint and PostgreSQL16.15; no candidate test imports",
+  "candidate_tests_used": false,
+  "postgres": "PostgreSQL 16.15 (Debian 16.15-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+  "server_version_num": 160015,
+  "extensions": [
+    [
+      "pgcrypto",
+      "1.3"
+    ],
+    [
+      "plpgsql",
+      "1.0"
+    ],
+    [
+      "uuid-ossp",
+      "1.1"
+    ]
+  ],
+  "listen_addresses": "",
+  "app_role": [
+    "custos_app",
+    false,
+    false
+  ],
+  "http_exit": 0,
+  "http": {
+    "verifier": "independent-pinned-http-v1",
+    "checks": [
+      {
+        "name": "unauthenticated",
+        "actual": 401,
+        "expected": 401,
+        "passed": true
+      },
+      {
+        "name": "bad_password",
+        "actual": 401,
+        "expected": 401,
+        "passed": true
+      },
+      {
+        "name": "valid_login_a",
+        "actual": 200,
+        "expected": 200,
+        "passed": true
+      },
+      {
+        "name": "token_a_present",
+        "actual": true,
+        "expected": true,
+        "passed": true
+      },
+      {
+        "name": "valid_login_b",
+        "actual": 200,
+        "expected": 200,
+        "passed": true
+      },
+      {
+        "name": "tenant_selection",
+        "actual": true,
+        "expected": true,
+        "passed": true
+      },
+      {
+        "name": "create_case",
+        "actual": 201,
+        "expected": 201,
+        "passed": true
+      },
+      {
+        "name": "own_case_visible",
+        "actual": true,
+        "expected": true,
+        "passed": true
+      },
+      {
+        "name": "other_tenant_hidden",
+        "actual": true,
+        "expected": true,
+        "passed": true
+      },
+      {
+        "name": "unapproved_blocked",
+        "actual": 403,
+        "expected": 403,
+        "passed": true
+      },
+      {
+        "name": "approve",
+        "actual": 201,
+        "expected": 201,
+        "passed": true
+      },
+      {
+        "name": "approved_authorized",
+        "actual": 200,
+        "expected": 200,
+        "passed": true
+      },
+      {
+        "name": "not_executed",
+        "actual": "AUTORIZADA_PERO_NO_EJECUTADA",
+        "expected": "AUTORIZADA_PERO_NO_EJECUTADA",
+        "passed": true
+      },
+      {
+        "name": "omitted_case_blocked",
+        "actual": 403,
+        "expected": 403,
+        "passed": true
+      },
+      {
+        "name": "changed_content_blocked",
+        "actual": 403,
+        "expected": 403,
+        "passed": true
+      },
+      {
+        "name": "other_tenant_approval_blocked",
+        "actual": 403,
+        "expected": 403,
+        "passed": true
+      },
+      {
+        "name": "reject_recorded",
+        "actual": 201,
+        "expected": 201,
+        "passed": true
+      },
+      {
+        "name": "rejection_revokes",
+        "actual": 403,
+        "expected": 403,
+        "passed": true
+      },
+      {
+        "name": "deadline_http",
+        "actual": 200,
+        "expected": 200,
+        "passed": true
+      },
+      {
+        "name": "deadline_date",
+        "actual": "2026-09-14",
+        "expected": "2026-09-14",
+        "passed": true
+      },
+      {
+        "name": "unknown_calendar_not_trusted",
+        "actual": false,
+        "expected": false,
+        "passed": true
+      },
+      {
+        "name": "error_path",
+        "actual": 404,
+        "expected": 404,
+        "passed": true
+      },
+      {
+        "name": "logout",
+        "actual": 200,
+        "expected": 200,
+        "passed": true
+      },
+      {
+        "name": "closed_session_rejected",
+        "actual": 401,
+        "expected": 401,
+        "passed": true
+      }
+    ],
+    "error": null,
+    "completed": true,
+    "passed": 24,
+    "failed": 0
+  },
+  "negative_exit": 1,
+  "negative": {
+    "verifier": "independent-pinned-http-v1",
+    "checks": [
+      {
+        "name": "unauthenticated",
+        "actual": 200,
+        "expected": 401,
+        "passed": false
+      },
+      {
+        "name": "bad_password",
+        "actual": 200,
+        "expected": 401,
+        "passed": false
+      },
+      {
+        "name": "valid_login_a",
+        "actual": 200,
+        "expected": 200,
+        "passed": true
+      },
+      {
+        "name": "token_a_present",
+        "actual": false,
+        "expected": true,
+        "passed": false
+      },
+      {
+        "name": "valid_login_b",
+        "actual": 200,
+        "expected": 200,
+        "passed": true
+      },
+      {
+        "name": "tenant_selection",
+        "actual": false,
+        "expected": true,
+        "passed": false
+      }
+    ],
+    "error": "RuntimeError: no real login tokens; downstream tests not attempted",
+    "completed": false,
+    "passed": 2,
+    "failed": 4
+  },
+  "api_stopped": true,
+  "pg_stop": 0,
+  "pg_status": 3,
+  "verifier_hash_after": "516b5f4757ccc2eade0cee4a7f5875075f6dd281d12168bb111b8459f0e14939",
+  "canary_in_api_log": false,
+  "candidate_changed_files": []
+}
