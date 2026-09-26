@@ -24,14 +24,14 @@ records = [
 graph = LegalGraph()
 graph.ingest(records)
 
-forward = graph.search("regla aplicable", limit=10, max_hops=1)
+forward = graph.search("cita expresa", limit=10, max_hops=1)
 forward_ids = [row["uid"] for row in forward]
+assert "norma-origen" in forward_ids
 assert "norma-destino" in forward_ids
-assert "norma-origen" not in forward_ids
 
-reverse = graph.search("cita expresa", limit=10, max_hops=1)
+reverse = graph.search("regla aplicable", limit=10, max_hops=1)
 reverse_ids = [row["uid"] for row in reverse]
-assert "norma-origen" in reverse_ids
-assert "norma-destino" not in reverse_ids
+assert "norma-destino" in reverse_ids
+assert "norma-origen" not in reverse_ids
 
 print("VERDE: LegalGraph conserva aristas dirigidas y rechaza la inversión")
