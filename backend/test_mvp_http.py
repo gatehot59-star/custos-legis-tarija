@@ -28,7 +28,7 @@ class CorpusDoble:
         }]}
 
 
-def request(port: int, method: str, path: str, body: dict | None = None,
+def request(port: int, method: str, path: str, body: object | None = None,
             token: str | None = None) -> tuple[int, dict]:
     """Hace una petición JSON contra el servidor real del test."""
     raw = json.dumps(body).encode() if body is not None else None
@@ -58,20 +58,30 @@ port = server.server_address[1]
 status, data = request(port, "POST", "/sesion",
                        {"email": "a@example.test", "password": "clave-a"})
 assert status == 200
+assert data["usuario"]["rol"] == "socio"
 token_a = data["token"]
 status, data_b = request(port, "POST", "/sesion",
                          {"email": "b@example.test", "password": "clave-b"})
 assert status == 200
 token_b = data_b["token"]
 
+status, data = request(port, "GET", "/salud")
+assert status == 200 and data["servicio"] == "custos-legis-tarija"
+
 status, data = request(port, "POST", "/casos",
                        {"nro_expediente": "MVP-1/2026", "juzgado": "Juzgado 1", "materia": "civil"}, token_a)
 assert status == 201
 case_id = data["id"]
 
+status, data = request(port, "GET", "/casos", token_a)
+assert status == 200 and any(item["id"] == case_id for item in data["casos"])
+
 status, _ = request(port, "POST", "/mvp/investigaciones",
                     {"case_id": case_id, "query": "artículo 90"})
 assert status == 401
+
+status, _ = request(port, "POST", "/mvp/investigaciones", [], token_a)
+assert status == 400
 
 encoded = base64.b64encode(b"notificacion de prueba").decode()
 status, data = request(port, "POST", "/mvp/documentos",
@@ -96,6 +106,10 @@ status, data = request(port, "POST", f"/mvp/borradores/{draft_id}/verificar",
                        {"case_id": case_id}, token_a)
 assert status == 200 and data["verificacion"]["ok"] is True
 
+status, _ = request(port, "POST", f"/mvp/borradores/{draft_id}/decision",
+                    {"case_id": case_id, "decision": "inventada"}, token_a)
+assert status == 422
+
 status, data = request(port, "POST", f"/mvp/borradores/{draft_id}/decision",
                        {"case_id": case_id, "decision": "aprobado",
                         "fundamento": "revisado"}, token_a)
@@ -105,11 +119,13 @@ status, data = request(port, "POST", f"/mvp/borradores/{draft_id}/exportar",
                        {"case_id": case_id}, token_a)
 assert status == 200
 assert data["media_type"].endswith("wordprocessingml.document")
-assert len(base64.b64decode(data["content_base64"])) > 100
+content = base64.b64decode(data["content_base64"])
+assert len(content) > 100
+assert data["content_sha256"] == __import__("hashlib").sha256(content).hexdigest()
 
 status, _ = request(port, "POST", f"/mvp/borradores/{draft_id}/verificar",
                     {"case_id": case_id}, token_b)
 assert status == 404
 
 server.shutdown()
-print("VERDE HTTP MVP: rutas existentes + sesión, caso, documento, investigación, borrador, HITL y DOCX")
+print("VERDE HTTP MVP: rutas existentes + sesión, caso, documento, investigación, borrador, HITL, DOCX y errores")
