@@ -22,6 +22,7 @@ from typing import Any
 from mvp import (ApprovalRequired, MVPError, MVPService, ValidationBlocked,
                  sha256_bytes)
 from mvp_contract import SearchSnapshot
+from retrieval import CompleteRetrievalError, search_complete
 
 MAX_DOCUMENT_BYTES = 10 * 1024 * 1024
 
@@ -58,8 +59,15 @@ class CorpusProvider:
     corpus: Any
 
     def search(self, query: str, *, limit: int = 10) -> dict[str, Any]:
-        """Consulta el cliente de corpus existente sin leer su almacenamiento."""
+        """Consulta una sola ventana para BM25 y el flujo histórico."""
         return self.corpus.buscar(query, limit=limit)
+
+    def search_all(self, query: str, *, page_size: int = 100) -> dict[str, Any]:
+        """Consume todas las páginas del contrato público del Corpus."""
+        try:
+            return search_complete(self.corpus, query, page_size=page_size)
+        except CompleteRetrievalError as exc:
+            raise MVPError(str(exc)) from exc
 
 
 @dataclass

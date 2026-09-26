@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Pruebas ejecutables del vertical MVP.
+"""Pruebas ejecutables del vertical MVP y sus patrones incorporados.
 
 Ejecutar desde este directorio con `python3 test_mvp.py`. Cada falsador rompe
 una condición distinta: una cita sin fuente, un plazo no confirmado, un cambio
-posterior a la aprobación y una exportación sin aprobación.
+posterior al borrador, una exportación sin aprobación o una cita apoyada en
+memoria operativa.
 """
 from __future__ import annotations
 
@@ -14,6 +15,8 @@ import zipfile
 from pathlib import Path
 
 import mvp
+from patterns import (AnswerState, Claim, EvidenceItem, EvidenceLayer,
+                      EvidenceRegistry, LegalGraph, draft_diff, workflow_pack)
 
 
 class FixtureProvider:
@@ -50,6 +53,41 @@ class FixtureProvider:
         ][:limit]}
 
 
+class GraphCompleteProvider:
+    """Corpus paginado: el destino de la arista queda fuera del top BM25."""
+
+    records = [
+        {
+            "uid": "art-90", "afirmacion": "Artículo 90 plazo civil",
+            "pasaje": "diez días hábiles", "fuente_url": "https://f/90",
+            "sha256": "9" * 64, "vigencia": "VIGENTE",
+            "validacion_numerica": {"status": "validated"},
+            "cites": ["norma-fuera-top"],
+        },
+        {
+            "uid": "distractor", "afirmacion": "Artículo 90 plazo alternativo",
+            "pasaje": "otro plazo", "fuente_url": "https://f/d",
+            "sha256": "6" * 64, "vigencia": "VIGENTE",
+            "validacion_numerica": {"status": "not_applicable"},
+        },
+        {
+            "uid": "norma-fuera-top", "afirmacion": "norma transitoriamente aplicable",
+            "pasaje": "regla relacionada", "fuente_url": "https://f/n",
+            "sha256": "7" * 64, "vigencia": "VIGENTE",
+            "validacion_numerica": {"status": "not_applicable"},
+        },
+    ]
+
+    def search(self, query: str, *, limit: int = 10) -> dict:
+        # Simula la ventana BM25 inicial: el nodo tercero queda fuera.
+        return {"resultados": self.records[:2][:limit], "total_pasajes": 3}
+
+    def search_all(self, query: str, *, page_size: int = 100) -> dict:
+        assert page_size == 100
+        return {"resultados": list(self.records), "total_pasajes": 3,
+                "retrieval_scope": "complete_query"}
+
+
 checks = 0
 failures: list[str] = []
 
@@ -72,6 +110,9 @@ search = service.research("tenant-a", "case-1", "plazo artículo 90")
 check("una cita pasa a allowed_citations", len(search.allowed_citations) == 1)
 check("candidato sin vigencia queda unread", len(search.unread_candidates) == 1)
 check("precedente derogado queda invalidado", len(search.invalidated_precedents) == 1)
+check("answer contract marca evidencia parcial como limited", search.answer_state == "limited")
+check("evidence_ids solo contiene autoridad legal", search.evidence_ids == ("ley-439",))
+check("BM25 declara ventana top-k", search.retrieval_scope == "top_k")
 
 # La ruta feliz necesita un plazo explícitamente confirmado.
 draft = service.draft(
@@ -79,8 +120,10 @@ draft = service.draft(
     {"estado": "CONFIRMADO", "vencimiento": "2026-10-10",
      "fundamento": "fixture de cálculo validado"},
     "civil")
+check("workflow pack civil queda versionado", draft.workflow.pack_id == "tarija-civil")
 check("workflow tiene cuatro roles", draft.workflow.roles == (
     "extractor", "investigador", "redactor", "verificador"))
+check("workflow conserva pasos como datos", "verificacion" in draft.workflow.steps)
 check("verificador acepta el borrador", service.verify(draft.draft_id)["ok"])
 
 with tempfile.TemporaryDirectory() as tmp:
@@ -119,6 +162,39 @@ bad = mvp.citation_from_result({
     "sha256": "d" * 64,
 })
 check("cita sin fuente no es exportable", not bad.exportable)
+
+# Judicex: la memoria operativa puede orientar, pero nunca citarse como ley.
+registry = EvidenceRegistry()
+registry.add_legal(EvidenceItem(
+    "ley-1", EvidenceLayer.LEGAL, "Artículo 1", "https://f/1", "1" * 64))
+registry.add_operational(EvidenceItem(
+    "nota-1", EvidenceLayer.OPERATIONAL, "preferencia del abogado"))
+grounded = registry.assess((Claim("c-1", "Artículo 1", ("ley-1",)),))
+limited = registry.assess((Claim("c-1", "Artículo 1", ("ley-1", "nota-1")),))
+abstain = registry.assess((Claim("c-2", "afirmación sin respaldo", ("nota-1",)),))
+check("evidencia legal produce grounded", grounded.state is AnswerState.GROUNDED)
+check("cita mezclada con memoria produce limited", limited.state is AnswerState.LIMITED)
+check("memoria operativa sola produce abstain", abstain.state is AnswerState.ABSTAIN)
+
+# LegalGraphRAG: el grafo ve el nodo de la segunda página, fuera del top BM25.
+graph_service = mvp.MVPService.create(GraphCompleteProvider())
+graph_search = graph_service.research(
+    "tenant-a", "case-graph", "artículo 90", engine="graph")
+check("graph retrieval conserva el motor", graph_search.engine == "graph")
+check("graph retrieval declara corpus completo", graph_search.retrieval_scope == "complete_query")
+check("graph retrieval expone contexto fuera del top", "norma-fuera-top" in graph_search.graph_context)
+check("graph retrieval conserva citas válidas", len(graph_search.allowed_citations) >= 2)
+try:
+    graph_service.research("tenant-a", "case-graph", "artículo 90", engine="desconocido")
+    check("engine desconocido se rechaza", False)
+except mvp.MVPError:
+    check("engine desconocido se rechaza", True)
+
+# Mike: la propuesta se revisa como diff antes de reemplazar el borrador.
+diff = draft_diff("línea uno\nlínea dos", "línea uno\nlínea corregida")
+check("diff detecta cambios", diff["changed"] is True)
+check("diff conserva hash antes/después", diff["before_sha256"] != diff["after_sha256"])
+check("diff separa altas y bajas", diff["additions"] == 1 and diff["deletions"] == 1)
 
 print(json.dumps({"checks": checks, "failures": failures}, ensure_ascii=False))
 if failures:
