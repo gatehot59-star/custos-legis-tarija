@@ -7,7 +7,7 @@ las mantiene en stdlib y detrás de contratos pequeños:
 * evidencia legal y memoria operativa no comparten el canal de citas;
 * el answer contract solo acepta citas de evidencia legal registrada;
 * los workflows son datos versionados, no ifs repartidos por el código;
-* el retrieval gráfico es determinista, acotado y medible;
+* el retrieval gráfico es determinista, dirigido, acotado y medible;
 * las revisiones producen diff y hashes antes de la aprobación humana.
 """
 from __future__ import annotations
@@ -223,12 +223,14 @@ def workflow_pack(materia: str, jurisdiction: str = "Tarija") -> WorkflowPack | 
 
 @dataclass
 class _GraphNode:
+    """Nodo con relaciones salientes, sin simetrizar el significado legal."""
+
     record: dict[str, Any]
-    neighbors: set[str]
+    outgoing: set[str]
 
 
 class LegalGraph:
-    """Índice gráfico pequeño: relaciones explícitas, hops acotados y ranking estable."""
+    """Índice gráfico dirigido de relaciones legales explícitas."""
 
     def __init__(self) -> None:
         self.nodes: dict[str, _GraphNode] = {}
@@ -254,7 +256,7 @@ class LegalGraph:
         return related
 
     def ingest(self, records: Iterable[Mapping[str, Any]]) -> None:
-        """Construye el grafo sin inventar relaciones no presentes en el corpus."""
+        """Construye aristas salientes sin inventar la relación inversa."""
         materialized = [dict(record) for record in records]
         for record in materialized:
             uid = self._uid(record)
@@ -266,15 +268,14 @@ class LegalGraph:
                 continue
             for target in self._relations(record):
                 if target in self.nodes:
-                    self.nodes[uid].neighbors.add(target)
-                    self.nodes[target].neighbors.add(uid)
+                    self.nodes[uid].outgoing.add(target)
 
     @staticmethod
     def _tokens(query: str) -> set[str]:
         return {token for token in re.findall(r"[\wáéíóúñ]+", query.lower()) if len(token) > 2}
 
     def search(self, query: str, limit: int = 10, max_hops: int = 2) -> list[dict[str, Any]]:
-        """Expande semillas por relaciones y devuelve trazabilidad del camino."""
+        """Expande semillas siguiendo solo relaciones salientes y muestra el camino."""
         if limit < 1:
             return []
         tokens = self._tokens(query)
@@ -294,7 +295,7 @@ class LegalGraph:
             next_frontier: list[str] = []
             for source in frontier:
                 source_score, _, source_path = best[source]
-                for target in sorted(self.nodes[source].neighbors):
+                for target in sorted(self.nodes[source].outgoing):
                     if target in best and best[target][1] <= hop:
                         continue
                     candidate = (source_score * 0.65, hop, source_path + (target,))
