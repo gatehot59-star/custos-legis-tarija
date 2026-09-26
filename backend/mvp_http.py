@@ -21,7 +21,7 @@ from typing import Any
 
 from mvp import (ApprovalRequired, MVPError, MVPService, ValidationBlocked,
                  sha256_bytes)
-from mvp_contract import DocumentRecord, SearchSnapshot
+from mvp_contract import SearchSnapshot
 
 MAX_DOCUMENT_BYTES = 10 * 1024 * 1024
 
@@ -197,7 +197,6 @@ class MVPHTTPState:
                 parts = suffix.split("/")
                 draft_id = parts[0] if parts else ""
                 context = self._owned_draft(session, draft_id)
-                draft = self.service.drafts[draft_id]
                 if context.case_id != self._required_string(body, "case_id"):
                     raise MVPHTTPError(409, "el borrador no pertenece a este caso")
                 if len(parts) == 2 and parts[1] == "verificar":
@@ -216,14 +215,20 @@ class MVPHTTPState:
                         raise MVPHTTPError(403, str(exc)) from exc
                     except ValidationBlocked as exc:
                         raise MVPHTTPError(422, str(exc)) from exc
+                    except MVPError as exc:
+                        raise MVPHTTPError(422, str(exc)) from exc
                     return 201, {"decision": record}
                 if len(parts) == 2 and parts[1] == "exportar":
                     if body.get("case_id") != context.case_id:
                         raise MVPHTTPError(409, "el borrador no pertenece a este caso")
                     with tempfile.TemporaryDirectory(prefix="custos-mvp-") as temp:
                         target = Path(temp) / f"{draft_id}.docx"
-                        self.service.export_docx(
-                            session.usuario.tenant_id, context.case_id, draft_id, target)
+                        try:
+                            self.service.export_docx(
+                                session.usuario.tenant_id, context.case_id,
+                                draft_id, target)
+                        except ApprovalRequired as exc:
+                            raise MVPHTTPError(403, str(exc)) from exc
                         content = target.read_bytes()
                     return 200, {
                         "filename": f"custos-legis-{context.case_id}.docx",
