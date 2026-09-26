@@ -14,6 +14,7 @@ from typing import Any, Literal, Protocol
 Role = Literal["extractor", "investigador", "redactor", "verificador"]
 Decision = Literal["aprobado", "rechazado", "correccion"]
 AnswerState = Literal["grounded", "limited", "abstain", "chat"]
+RetrievalScope = Literal["top_k", "complete_query"]
 
 
 class SearchProvider(Protocol):
@@ -116,6 +117,7 @@ class SearchSnapshot:
     answer_state: AnswerState = "abstain"
     evidence_ids: tuple[str, ...] = ()
     graph_context: tuple[str, ...] = ()
+    retrieval_scope: RetrievalScope = "top_k"
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -125,6 +127,7 @@ class SearchSnapshot:
             "answer_state": self.answer_state,
             "evidence_ids": list(self.evidence_ids),
             "graph_context": list(self.graph_context),
+            "retrieval_scope": self.retrieval_scope,
             "allowed_citations": [c.as_dict() for c in self.allowed_citations],
             "unread_candidates": list(self.unread_candidates),
             "invalidated_precedents": list(self.invalidated_precedents),
