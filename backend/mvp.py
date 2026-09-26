@@ -209,14 +209,26 @@ class MVPService:
 
     def research(self, tenant_id: str, case_id: str, query: str,
                  limit: int = 10, engine: str = "bm25") -> SearchSnapshot:
-        """Investiga con contrato de respuesta, evidencia legal y grafo opcional."""
+        """Investiga y hace explícito si el grafo vio toda la consulta."""
         if not query.strip():
             raise MVPError("la consulta no puede estar vacía")
+        engine_name = engine.strip().lower()
+        if engine_name not in {"bm25", "graph"}:
+            raise MVPError("engine debe ser 'bm25' o 'graph'")
         bounded_limit = min(max(limit, 1), 50)
-        raw = self.provider.search(query, limit=bounded_limit)
+        retrieval_scope = "top_k"
+        if engine_name == "graph":
+            search_all = getattr(self.provider, "search_all", None)
+            if not callable(search_all):
+                raise MVPError(
+                    "graph exige un proveedor paginado para recuperar el corpus completo")
+            raw = search_all(query, page_size=100)
+            retrieval_scope = "complete_query"
+        else:
+            raw = self.provider.search(query, limit=bounded_limit)
         results = list(raw.get("resultados", []))
         graph_context: tuple[str, ...] = ()
-        if engine.strip().lower() == "graph":
+        if engine_name == "graph":
             graph = LegalGraph()
             graph.ingest(results)
             results = graph.search(query, limit=bounded_limit, max_hops=2)
@@ -251,10 +263,11 @@ class MVPService:
         if answer_state == "grounded" and (unread or invalidated):
             answer_state = "limited"
         snapshot = SearchSnapshot(
-            query=query, engine=engine, workflow_version=WORKFLOW_VERSION,
+            query=query, engine=engine_name, workflow_version=WORKFLOW_VERSION,
             allowed_citations=tuple(allowed), unread_candidates=tuple(unread),
             invalidated_precedents=tuple(invalidated), answer_state=answer_state,
             evidence_ids=registry.legal_ids(), graph_context=graph_context,
+            retrieval_scope=retrieval_scope,
         )
         self._record("investigacion_completada", tenant_id, case_id, "investigador",
                      snapshot.as_dict())
