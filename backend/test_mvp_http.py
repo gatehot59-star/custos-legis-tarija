@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import threading
 import urllib.error
@@ -73,7 +74,7 @@ status, data = request(port, "POST", "/casos",
 assert status == 201
 case_id = data["id"]
 
-status, data = request(port, "GET", "/casos", token_a)
+status, data = request(port, "GET", "/casos", token=token_a)
 assert status == 200 and any(item["id"] == case_id for item in data["casos"])
 
 status, _ = request(port, "POST", "/mvp/investigaciones",
@@ -121,7 +122,7 @@ assert status == 200
 assert data["media_type"].endswith("wordprocessingml.document")
 content = base64.b64decode(data["content_base64"])
 assert len(content) > 100
-assert data["content_sha256"] == __import__("hashlib").sha256(content).hexdigest()
+assert data["content_sha256"] == hashlib.sha256(content).hexdigest()
 
 status, _ = request(port, "POST", f"/mvp/borradores/{draft_id}/verificar",
                     {"case_id": case_id}, token_b)
