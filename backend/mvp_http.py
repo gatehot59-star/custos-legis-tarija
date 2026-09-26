@@ -2,10 +2,8 @@
 """backend/mvp_http.py: rutas HTTP del vertical MVP, detrás de la sesión existente.
 
 Este módulo no crea autenticación paralela. Recibe la sesión ya validada por
-`api.py`, comprueba que el caso pertenece al bufete y expone las etapas del
-vertical como transiciones explícitas. El estado del orquestador es de piloto,
-conservado en memoria; la auditoría puede persistirse en JSONL mediante
-`CUSTOS_MVP_AUDIT_PATH`.
+`api.py`, comprueba tenant/caso y usa PostgreSQL con RLS cuando existe
+`DATABASE_URL_APP`. Sin DSN conserva el modo de pruebas en memoria.
 """
 from __future__ import annotations
 
@@ -22,6 +20,7 @@ from typing import Any
 from mvp import (ApprovalRequired, MVPError, MVPService, ValidationBlocked,
                  sha256_bytes)
 from mvp_contract import SearchSnapshot
+from mvp_persistence import MVPRepository
 from retrieval import CompleteRetrievalError, search_complete
 
 MAX_DOCUMENT_BYTES = 10 * 1024 * 1024
@@ -37,7 +36,7 @@ class MVPHTTPError(MVPError):
 
 @dataclass(frozen=True)
 class SearchContext:
-    """Propiedad de una búsqueda guardada en el orquestador del piloto."""
+    """Propiedad de una búsqueda guardada en el orquestador."""
 
     tenant_id: str
     case_id: str
@@ -75,6 +74,7 @@ class MVPHTTPState:
     """Estado HTTP del vertical y sus índices de propiedad por tenant."""
 
     service: MVPService
+    repository: MVPRepository | None = None
     searches: dict[str, SearchContext] = field(default_factory=dict)
     drafts: dict[str, DraftContext] = field(default_factory=dict)
     documents: dict[str, str] = field(default_factory=dict)
@@ -82,9 +82,22 @@ class MVPHTTPState:
 
     @classmethod
     def create(cls, corpus: Any) -> "MVPHTTPState":
-        """Crea el adaptador usando el corpus inyectado por `App`."""
+        """Crea el adaptador y activa PostgreSQL si el DSN está configurado."""
         audit_path = os.environ.get("CUSTOS_MVP_AUDIT_PATH") or None
-        return cls(MVPService.create(CorpusProvider(corpus), audit_path=audit_path))
+        dsn = os.environ.get("DATABASE_URL_APP") or ""
+        repository = MVPRepository(dsn) if dsn.strip() else None
+        state = cls(MVPService.create(CorpusProvider(corpus), audit_path=audit_path),
+                    repository=repository)
+        if repository is not None:
+            previous_append = state.service.ledger.append
+
+            def append_persistent(event: dict[str, Any]) -> None:
+                """Escribe auditoría SQL antes de publicar el resultado."""
+                repository.save_audit(event["tenant_id"], event)
+                previous_append(event)
+
+            state.service.ledger.append = append_persistent
+        return state
 
     @staticmethod
     def _require_case(almacen: Any, session: Any, case_id: str) -> None:
@@ -104,7 +117,7 @@ class MVPHTTPState:
 
     @staticmethod
     def _decode_content(body: dict[str, Any]) -> bytes:
-        """Decodifica contenido base64 y aplica un límite de tamaño del piloto."""
+        """Decodifica contenido base64 y aplica un límite de tamaño."""
         encoded = body.get("contenido_base64")
         if not isinstance(encoded, str) or not encoded:
             raise MVPHTTPError(400, "contenido_base64 es obligatorio")
@@ -124,21 +137,35 @@ class MVPHTTPState:
         return hashlib.sha256(value).hexdigest()
 
     def _owned_search(self, session: Any, search_id: str) -> SearchSnapshot:
-        """Obtiene una búsqueda y verifica su tenant y caso."""
+        """Obtiene una búsqueda de memoria o PostgreSQL bajo RLS."""
         context = self.searches.get(search_id)
-        if context is None:
-            raise MVPHTTPError(404, "investigación inexistente")
-        if context.tenant_id != session.usuario.tenant_id:
+        if context is None and self.repository is not None:
+            loaded = self.repository.load_search(session.usuario.tenant_id, search_id)
+            if loaded is not None:
+                case_id, snapshot = loaded
+                context = SearchContext(session.usuario.tenant_id, case_id, snapshot)
+                self.searches[search_id] = context
+        if context is None or context.tenant_id != session.usuario.tenant_id:
             raise MVPHTTPError(404, "investigación inexistente en este bufete")
         return context.snapshot
 
     def _owned_draft(self, session: Any, draft_id: str) -> DraftContext:
-        """Obtiene un borrador y verifica su tenant."""
+        """Obtiene y, si hace falta, hidrata un borrador desde PostgreSQL."""
         context = self.drafts.get(draft_id)
-        if context is None:
-            raise MVPHTTPError(404, "borrador inexistente")
-        if context.tenant_id != session.usuario.tenant_id:
+        if context is None and self.repository is not None:
+            draft = self.repository.load_draft(session.usuario.tenant_id, draft_id)
+            if draft is not None:
+                self.service.drafts[draft_id] = draft
+                context = DraftContext(session.usuario.tenant_id, draft.case_id)
+                self.drafts[draft_id] = context
+        if context is None or context.tenant_id != session.usuario.tenant_id:
             raise MVPHTTPError(404, "borrador inexistente en este bufete")
+        if self.repository is not None:
+            loaded = self.repository.load_decisions(
+                session.usuario.tenant_id, context.case_id, draft_id)
+            known = {item.get("decision_id") for item in self.service.decisions}
+            self.service.decisions.extend(
+                item for item in loaded if item.get("decision_id") not in known)
         return context
 
     def handle(self, method: str, path: str, body: dict[str, Any],
@@ -157,6 +184,9 @@ class MVPHTTPState:
                 document = self.service.ingest_document(
                     tenant_id, case_id, filename, content, media_type.strip())
                 self.documents[document.document_id] = tenant_id
+                if self.repository is not None:
+                    self.repository.save_document(
+                        tenant_id, document, sha256_bytes(content))
                 return 201, {"documento": document.as_dict(),
                              "contenido_sha256": sha256_bytes(content)}
 
@@ -176,6 +206,8 @@ class MVPHTTPState:
                     f"{tenant_id}:{case_id}:{snapshot.query}:{snapshot.workflow_version}".encode()
                 ).hexdigest()[:24]
                 self.searches[search_id] = SearchContext(tenant_id, case_id, snapshot)
+                if self.repository is not None:
+                    self.repository.save_search(tenant_id, search_id, case_id, snapshot)
                 return 201, {"search_id": search_id, "case_id": case_id,
                              "investigacion": snapshot.as_dict()}
 
@@ -185,6 +217,7 @@ class MVPHTTPState:
                 search_id = self._required_string(body, "search_id")
                 search_context = self.searches.get(search_id)
                 snapshot = self._owned_search(session, search_id)
+                search_context = self.searches.get(search_id, search_context)
                 if search_context is None or search_context.case_id != case_id:
                     raise MVPHTTPError(409, "la investigación no pertenece a este caso")
                 deadline = body.get("deadline")
@@ -198,6 +231,8 @@ class MVPHTTPState:
                     tenant_id, case_id, snapshot, deadline, materia,
                     jurisdiction.strip())
                 self.drafts[draft.draft_id] = DraftContext(tenant_id, case_id)
+                if self.repository is not None:
+                    self.repository.save_draft(tenant_id, draft)
                 return 201, {"borrador": draft.as_dict()}
 
             if method == "POST" and path.startswith("/mvp/borradores/"):
@@ -225,10 +260,10 @@ class MVPHTTPState:
                         raise MVPHTTPError(422, str(exc)) from exc
                     except MVPError as exc:
                         raise MVPHTTPError(422, str(exc)) from exc
+                    if self.repository is not None:
+                        self.repository.save_decision(tenant_id, record)
                     return 201, {"decision": record}
                 if len(parts) == 2 and parts[1] == "exportar":
-                    if body.get("case_id") != context.case_id:
-                        raise MVPHTTPError(409, "el borrador no pertenece a este caso")
                     with tempfile.TemporaryDirectory(prefix="custos-mvp-") as temp:
                         target = Path(temp) / f"{draft_id}.docx"
                         try:
