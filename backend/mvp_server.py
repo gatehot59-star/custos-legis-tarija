@@ -15,9 +15,11 @@ from typing import Any
 
 import api as API
 from almacen import PostgresAlmacen
+from mvp import MVPError
 from mvp_http import MVPHTTPError, MVPHTTPState
 
 App = API.App
+MAX_JSON_BODY_BYTES = 14 * 1024 * 1024
 
 
 def construir_handler_mvp(app: App):
@@ -31,11 +33,20 @@ def construir_handler_mvp(app: App):
             if ruta.startswith("/mvp/"):
                 try:
                     sesion = self._sesion()
+                    longitud = int(self.headers.get("Content-Length") or 0)
+                    if longitud > MAX_JSON_BODY_BYTES:
+                        raise MVPHTTPError(413, "el cuerpo JSON supera el límite de 14 MiB")
                     cuerpo = self._cuerpo() if metodo == "POST" else {}
+                    if not isinstance(cuerpo, dict):
+                        raise MVPHTTPError(400, "el cuerpo JSON debe ser un objeto")
                     return app.mvp_http.handle(
                         metodo, ruta, cuerpo, sesion, app.almacen)
                 except MVPHTTPError as error:
                     return error.status, {"error": str(error)}
+                except API.CorpusCerrado as error:
+                    return 503, {"error": str(error), "corpus": "cerrado"}
+                except MVPError as error:
+                    return 422, {"error": str(error)}
             return super()._despachar(metodo, ruta, params)
 
     return Handler
