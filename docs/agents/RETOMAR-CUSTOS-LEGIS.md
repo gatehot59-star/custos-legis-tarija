@@ -7,6 +7,12 @@ Custos Legis en una instancia nueva, sin memoria de esta conversación.
 > Los tres son la verdad medida. El README y los ADRs son la intención.
 > Donde difieran, ganan los tres primeros.
 
+> **Nota de alcance:** **MUDH-Mobile NO es parte de Custos Legis.** Es un
+> proyecto separado. Lo único que este documento toma de ahí es el inventario
+> canónico de máquinas (`00-ENTORNOS-Y-CAPACIDADES.md`), que es **compartido
+> por varios proyectos** y casualmente vive en ese repo. Nada del código, la
+> metodología o los repos de MUDH-Mobile forman parte de este producto.
+
 ---
 
 ## 1 · Qué es Custos Legis, en dos frases
@@ -54,11 +60,12 @@ anunciada. Decisión pendiente: VM separada para Custos (recomendada) vs todo en
 la misma. **NO MEDIDO:** costo/hora de una VM Abacus y cuánto degrada el
 buscador un stack de agentes en 2 núcleos. Medir antes de elegir.
 
-### Inventario canónico
+### Inventario canónico de máquinas
 
-`00-ENTORNOS-Y-CAPACIDADES.md` en `gatehot59-star/mudh-mobile` (se **linkea**,
-no se copia). Antes de declarar "no puedo", medir de nuevo: el inventario se
-re-mide, no se recuerda.
+`00-ENTORNOS-Y-CAPACIDADES.md` vive en `gatehot59-star/mudh-mobile` **solo
+porque ahí nació el inventario compartido**; es de varios proyectos, no de
+MUDH-Mobile ni de Custos. Se **linkea**, no se copia. Antes de declarar "no
+puedo", medir de nuevo: el inventario se re-mide, no se recuerda.
 
 ---
 
