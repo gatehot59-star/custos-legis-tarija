@@ -106,6 +106,13 @@ try:
     assert repository.load_search(other_tenant_id, search_id) is None
     print("VERDE: persistencia MVP, roundtrip tipado y aislamiento RLS")
 finally:
+    # Las decisiones y auditorías son evidencia inmutable: un DELETE por
+    # cascada debe dar rojo. TRUNCATE es solo para este PostgreSQL efímero de CI
+    # y no ejecuta triggers de fila; no es una ruta de producción.
+    admin_execute(
+        "TRUNCATE public.cl_mvp_audit_events, public.cl_mvp_decisions, "
+        "public.cl_mvp_drafts, public.cl_mvp_searches, public.cl_mvp_documents",
+    )
     admin_execute(
         "DELETE FROM public.tenants WHERE id IN (%s, %s)",
         (tenant_id, other_tenant_id),
