@@ -138,7 +138,7 @@ class EvidenceRegistry:
         if not claims_list:
             errors.append("no hay afirmaciones para evaluar")
             state = AnswerState.ABSTAIN
-        elif len(unsupported) == 0:
+        elif len(unsupported) == 0 and not rejected_unique:
             state = AnswerState.GROUNDED
         elif len(accepted_unique) > 0:
             state = AnswerState.LIMITED
@@ -317,14 +317,16 @@ class LegalGraph:
 
 def draft_diff(before: str, after: str) -> dict[str, Any]:
     """Diff auditable para revisión tipo Mike: propuesta primero, aprobación después."""
-    matcher = SequenceMatcher(a=before.splitlines(), b=after.splitlines())
+    before_lines = before.splitlines()
+    after_lines = after.splitlines()
+    matcher = SequenceMatcher(a=before_lines, b=after_lines)
     operations: list[dict[str, Any]] = []
     additions = deletions = 0
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == "equal":
             continue
-        old_lines = before.splitlines()[i1:i2]
-        new_lines = after.splitlines()[j1:j2]
+        old_lines = before_lines[i1:i2]
+        new_lines = after_lines[j1:j2]
         additions += len(new_lines)
         deletions += len(old_lines)
         operations.append({"op": tag, "before": old_lines, "after": new_lines})
