@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prueba HTTP real del vertical conectado a api.py."""
+"""Prueba HTTP real del vertical junto a las rutas existentes de api.py."""
 from __future__ import annotations
 
 import base64
@@ -10,6 +10,7 @@ import urllib.request
 
 import almacen as AL
 import api as API
+import mvp_server as SERVER
 
 
 class CorpusDoble:
@@ -50,7 +51,7 @@ store.sembrar_bufete("a", "Estudio A", "a@example.test", "clave-a",
 store.sembrar_bufete("b", "Estudio B", "b@example.test", "clave-b",
                     rol="socio", matricula="MAT-B")
 app = API.App(almacen=store, corpus=CorpusDoble())
-server = API.servir(app, "127.0.0.1", 0)
+server = SERVER.servir_con_mvp(app, "127.0.0.1", 0)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 port = server.server_address[1]
 
@@ -111,4 +112,4 @@ status, _ = request(port, "POST", f"/mvp/borradores/{draft_id}/verificar",
 assert status == 404
 
 server.shutdown()
-print("VERDE HTTP MVP: sesión, caso, documento, investigación, borrador, HITL y DOCX")
+print("VERDE HTTP MVP: rutas existentes + sesión, caso, documento, investigación, borrador, HITL y DOCX")
