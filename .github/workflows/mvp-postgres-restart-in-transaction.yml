@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
-      - "backend/test_mvp_postgres_restart_in_transaction_v2.py"
+      - "backend/test_mvp_postgres_restart_in_transaction_v3.py"
       - ".github/workflows/mvp-postgres-restart-in-transaction.yml"
       - "backend/mvp_*.py"
       - "backend/api.py"
@@ -12,7 +12,7 @@ on:
       - "infra/**"
   push:
     paths:
-      - "backend/test_mvp_postgres_restart_in_transaction_v2.py"
+      - "backend/test_mvp_postgres_restart_in_transaction_v3.py"
       - ".github/workflows/mvp-postgres-restart-in-transaction.yml"
       - "backend/mvp_*.py"
       - "backend/api.py"
@@ -65,5 +65,5 @@ jobs:
       - name: compilar y medir reinicio dentro de transacción
         run: |
           set -euo pipefail
-          python3 -m py_compile backend/test_mvp_postgres_restart_in_transaction_v2.py backend/mvp_server.py backend/mvp_http.py
-          python3 backend/test_mvp_postgres_restart_in_transaction_v2.py
+          python3 -m py_compile backend/test_mvp_postgres_restart_in_transaction_v3.py backend/mvp_server.py backend/mvp_http.py
+          python3 backend/test_mvp_postgres_restart_in_transaction_v3.py
