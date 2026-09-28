@@ -123,15 +123,27 @@ try:
     except MVPPersistenceError:
         pass
 
+    rollback_search = "search-rollback-test"
+    bad_audit = {
+        "event_id": "audit-invalid-timestamp", "event": "transacción_fallida",
+        "tenant_id": tenant_id, "case_id": case_id, "created_at": "not-a-timestamp",
+    }
+    try:
+        repository.save_search_with_audit(
+            tenant_id, rollback_search, case_id, snapshot, bad_audit)
+        raise AssertionError("la transacción negocio+auditoría aceptó un evento inválido")
+    except MVPPersistenceError:
+        pass
+    assert repository.load_search(tenant_id, rollback_search) is None
+
+    delete_blocked = False
     try:
         admin_execute("DELETE FROM public.tenants WHERE id = %s", (tenant_id,))
-        raise AssertionError("DELETE de tenant con evidencia no fue bloqueado")
     except Exception:
-        # Este es el falsador real: RESTRICT impide borrar el tenant y conservar
-        # las filas inmutables; no se simula con un SELECT ni con TRUNCATE.
-        pass
+        delete_blocked = True
+    assert delete_blocked, "DELETE de tenant con evidencia no fue bloqueado"
     assert repository.load_draft(tenant_id, draft_id) is not None
-    print("VERDE: columnas tipadas, hashes ligados, decisiones validadas, transacción y DELETE RESTRICT")
+    print("VERDE: columnas tipadas, hashes ligados, rollback transaccional y DELETE RESTRICT")
 finally:
     # TRUNCATE se usa solamente para dejar limpio el PostgreSQL efímero después
     # de haber medido el DELETE real arriba.
