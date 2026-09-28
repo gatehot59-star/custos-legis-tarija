@@ -323,6 +323,9 @@ class MVPService:
         if draft is None:
             raise MVPError("borrador inexistente")
         errors: list[str] = []
+        actual_hash = sha256_text(draft.content)
+        if actual_hash != draft.content_sha256:
+            errors.append("hash del borrador no coincide con el contenido")
         if not draft.search.allowed_citations:
             errors.append("no hay citas permitidas")
         if draft.search.answer_state == "abstain":
@@ -371,6 +374,8 @@ class MVPService:
         draft = self.drafts.get(draft_id)
         if draft is None or draft.case_id != case_id:
             raise MVPError("borrador y caso no coinciden")
+        if sha256_text(draft.content) != draft.content_sha256:
+            raise ApprovalRequired("DOCX bloqueado: hash declarado no coincide con contenido")
         matching = [d for d in self.decisions
                     if d["tenant_id"] == tenant_id and d["case_id"] == case_id
                     and d["draft_id"] == draft_id
@@ -389,3 +394,4 @@ class MVPService:
                      {"draft_id": draft_id, "content_sha256": draft.content_sha256,
                       "path": str(target)})
         return target
+

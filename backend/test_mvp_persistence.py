@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Prueba PostgreSQL real del repositorio persistente del MVP."""
+"""Falsadores PostgreSQL del contrato persistente del MVP."""
 from __future__ import annotations
 
+import hashlib
 import os
 import uuid
 from dataclasses import dataclass
@@ -9,9 +10,8 @@ from typing import Any
 
 import psycopg
 
-from mvp_contract import (AuditEvent, Citation, Draft, NumericValidation,
-                          SearchSnapshot, Workflow)
-from mvp_persistence import MVPRepository
+from mvp_contract import Citation, Draft, NumericValidation, SearchSnapshot, Workflow
+from mvp_persistence import MVPRepository, MVPPersistenceError
 
 
 @dataclass
@@ -63,8 +63,7 @@ try:
         uid="ley-persistida", statement="regla persistida",
         source_url="https://fuente.example/ley-persistida",
         fragment="Artículo persistido", source_sha256="a" * 64,
-        vigencia="VIGENTE",
-        numeric_validation=NumericValidation("not_applicable"),
+        vigencia="VIGENTE", numeric_validation=NumericValidation("not_applicable"),
     )
     snapshot = SearchSnapshot(
         query="regla persistida", engine="bm25", workflow_version="test-1",
@@ -72,9 +71,11 @@ try:
         evidence_ids=(citation.uid,), retrieval_scope="top_k",
     )
     workflow = Workflow("test-1", "civil", "Tarija")
+    content = "Borrador persistido"
+    content_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
     draft = Draft(
-        draft_id=draft_id, case_id=case_id, content="Borrador persistido",
-        content_sha256="b" * 64, workflow=workflow, search=snapshot,
+        draft_id=draft_id, case_id=case_id, content=content,
+        content_sha256=content_sha256, workflow=workflow, search=snapshot,
         deadline={"estado": "CONFIRMADO"}, warnings=(),
     )
 
@@ -82,17 +83,19 @@ try:
         tenant_id, FixtureDocument("document-persistence-test", case_id), "c" * 64)
     repository.save_search(tenant_id, search_id, case_id, snapshot)
     repository.save_draft(tenant_id, draft)
-    repository.save_decision(tenant_id, {
+    decision = {
         "decision_id": "decision-persistence-test", "tenant_id": tenant_id,
-        "case_id": case_id, "draft_id": draft_id, "content_sha256": "b" * 64,
-        "decision": "aprobado", "created_at": "2026-09-26T16:00:00+00:00",
-        "matricula": "MAT-TEST",
+        "case_id": case_id, "draft_id": draft_id,
+        "content_sha256": content_sha256, "user_id": "user-persistence-test",
+        "role": "socio", "matricula": "MAT-TEST", "decision": "aprobado",
+        "fundamento": "revisión", "created_at": "2026-09-26T16:00:00+00:00",
+    }
+    repository.save_decision(tenant_id, decision)
+    repository.save_audit(tenant_id, {
+        "event_id": "audit-persistence-test", "event": "test_persistido",
+        "tenant_id": tenant_id, "case_id": case_id, "role": "investigador",
+        "payload": {"ok": True}, "created_at": "2026-09-26T16:00:00+00:00",
     })
-    repository.save_audit(tenant_id, AuditEvent(
-        event_id="audit-persistence-test", event="test_persistido",
-        tenant_id=tenant_id, case_id=case_id, role="investigador",
-        payload={"ok": True}, created_at="2026-09-26T16:00:00+00:00",
-    ).as_dict())
 
     loaded_case, loaded_search = repository.load_search(tenant_id, search_id) or (None, None)
     assert loaded_case == case_id
@@ -103,12 +106,47 @@ try:
     decisions = repository.load_decisions(tenant_id, case_id, draft_id)
     assert len(decisions) == 1 and decisions[0]["decision"] == "aprobado"
 
-    assert repository.load_search(other_tenant_id, search_id) is None
-    print("VERDE: persistencia MVP, roundtrip tipado y aislamiento RLS")
+    try:
+        repository.save_decision(tenant_id, {**decision, "decision": "inventada",
+                                             "decision_id": "decision-invalid-kind"})
+        raise AssertionError("la decisión inválida fue aceptada")
+    except MVPPersistenceError:
+        pass
+    try:
+        bad_content = Draft(
+            draft_id="draft-invalid-hash", case_id=case_id, content=content,
+            content_sha256="b" * 64, workflow=workflow, search=snapshot,
+            deadline={"estado": "CONFIRMADO"}, warnings=(),
+        )
+        repository.save_draft(tenant_id, bad_content)
+        raise AssertionError("el borrador con hash inválido fue aceptado")
+    except MVPPersistenceError:
+        pass
+
+    rollback_search = "search-rollback-test"
+    bad_audit = {
+        "event_id": "audit-invalid-timestamp", "event": "transacción_fallida",
+        "tenant_id": tenant_id, "case_id": case_id, "created_at": "not-a-timestamp",
+    }
+    try:
+        repository.save_search_with_audit(
+            tenant_id, rollback_search, case_id, snapshot, bad_audit)
+        raise AssertionError("la transacción negocio+auditoría aceptó un evento inválido")
+    except MVPPersistenceError:
+        pass
+    assert repository.load_search(tenant_id, rollback_search) is None
+
+    delete_blocked = False
+    try:
+        admin_execute("DELETE FROM public.tenants WHERE id = %s", (tenant_id,))
+    except Exception:
+        delete_blocked = True
+    assert delete_blocked, "DELETE de tenant con evidencia no fue bloqueado"
+    assert repository.load_draft(tenant_id, draft_id) is not None
+    print("VERDE: columnas tipadas, hashes ligados, rollback transaccional y DELETE RESTRICT")
 finally:
-    # Las decisiones y auditorías son evidencia inmutable: un DELETE por
-    # cascada debe dar rojo. TRUNCATE es solo para este PostgreSQL efímero de CI
-    # y no ejecuta triggers de fila; no es una ruta de producción.
+    # TRUNCATE se usa solamente para dejar limpio el PostgreSQL efímero después
+    # de haber medido el DELETE real arriba.
     admin_execute(
         "TRUNCATE public.cl_mvp_audit_events, public.cl_mvp_decisions, "
         "public.cl_mvp_drafts, public.cl_mvp_searches, public.cl_mvp_documents",

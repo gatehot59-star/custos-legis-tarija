@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""backend/mvp_http.py: rutas HTTP del vertical MVP, detrás de la sesión existente.
-
-Este módulo no crea autenticación paralela. Recibe la sesión ya validada por
-`api.py`, comprueba tenant/caso y usa PostgreSQL con RLS cuando existe
-`DATABASE_URL_APP`. Sin DSN conserva el modo de pruebas en memoria.
-"""
+"""Rutas HTTP del vertical MVP con persistencia transaccional y RLS."""
 from __future__ import annotations
 
 import base64
@@ -17,10 +12,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from mvp import (ApprovalRequired, MVPError, MVPService, ValidationBlocked,
-                 sha256_bytes)
+from mvp import ApprovalRequired, MVPError, MVPService, ValidationBlocked, sha256_bytes
 from mvp_contract import SearchSnapshot
-from mvp_persistence import MVPRepository
+from mvp_persistence import MVPRepository, MVPPersistenceError
 from retrieval import CompleteRetrievalError, search_complete
 
 MAX_DOCUMENT_BYTES = 10 * 1024 * 1024
@@ -53,12 +47,12 @@ class DraftContext:
 
 @dataclass
 class CorpusProvider:
-    """Adapta el `buscar` existente al puerto `SearchProvider` del MVP."""
+    """Adapta el buscar existente al puerto SearchProvider del MVP."""
 
     corpus: Any
 
     def search(self, query: str, *, limit: int = 10) -> dict[str, Any]:
-        """Consulta una sola ventana para BM25 y el flujo histórico."""
+        """Consulta una sola ventana para BM25."""
         return self.corpus.buscar(query, limit=limit)
 
     def search_all(self, query: str, *, page_size: int = 100) -> dict[str, Any]:
@@ -89,15 +83,26 @@ class MVPHTTPState:
         state = cls(MVPService.create(CorpusProvider(corpus), audit_path=audit_path),
                     repository=repository)
         if repository is not None:
-            previous_append = state.service.ledger.append
-
-            def append_persistent(event: dict[str, Any]) -> None:
-                """Escribe auditoría SQL antes de publicar el resultado."""
-                repository.save_audit(event["tenant_id"], event)
-                previous_append(event)
-
-            state.service.ledger.append = append_persistent
+            # El evento se conserva en memoria; SQL lo publica solo dentro de la
+            # transacción que confirma la entidad de negocio.
+            state.service.ledger.append = lambda _event: None
         return state
+
+    def _latest_event(self) -> dict[str, Any]:
+        """Obtiene el evento recién producido por el servicio."""
+        if not self.service.ledger.events:
+            raise MVPHTTPError(500, "el servicio no produjo evento de auditoría")
+        return self.service.ledger.events[-1].as_dict()
+
+    def _discard_latest_event(self) -> None:
+        """Revierte el evento en memoria cuando la transacción fue abortada."""
+        if self.service.ledger.events:
+            self.service.ledger.events.pop()
+
+    @staticmethod
+    def _persistence_unavailable(error: MVPPersistenceError) -> MVPHTTPError:
+        """Convierte un fallo de PostgreSQL en una respuesta controlada."""
+        return MVPHTTPError(503, f"persistencia MVP no disponible: {error}")
 
     @staticmethod
     def _require_case(almacen: Any, session: Any, case_id: str) -> None:
@@ -140,7 +145,10 @@ class MVPHTTPState:
         """Obtiene una búsqueda de memoria o PostgreSQL bajo RLS."""
         context = self.searches.get(search_id)
         if context is None and self.repository is not None:
-            loaded = self.repository.load_search(session.usuario.tenant_id, search_id)
+            try:
+                loaded = self.repository.load_search(session.usuario.tenant_id, search_id)
+            except MVPPersistenceError as exc:
+                raise self._persistence_unavailable(exc) from exc
             if loaded is not None:
                 case_id, snapshot = loaded
                 context = SearchContext(session.usuario.tenant_id, case_id, snapshot)
@@ -153,7 +161,10 @@ class MVPHTTPState:
         """Obtiene y, si hace falta, hidrata un borrador desde PostgreSQL."""
         context = self.drafts.get(draft_id)
         if context is None and self.repository is not None:
-            draft = self.repository.load_draft(session.usuario.tenant_id, draft_id)
+            try:
+                draft = self.repository.load_draft(session.usuario.tenant_id, draft_id)
+            except MVPPersistenceError as exc:
+                raise self._persistence_unavailable(exc) from exc
             if draft is not None:
                 self.service.drafts[draft_id] = draft
                 context = DraftContext(session.usuario.tenant_id, draft.case_id)
@@ -161,8 +172,11 @@ class MVPHTTPState:
         if context is None or context.tenant_id != session.usuario.tenant_id:
             raise MVPHTTPError(404, "borrador inexistente en este bufete")
         if self.repository is not None:
-            loaded = self.repository.load_decisions(
-                session.usuario.tenant_id, context.case_id, draft_id)
+            try:
+                loaded = self.repository.load_decisions(
+                    session.usuario.tenant_id, context.case_id, draft_id)
+            except MVPPersistenceError as exc:
+                raise self._persistence_unavailable(exc) from exc
             known = {item.get("decision_id") for item in self.service.decisions}
             self.service.decisions.extend(
                 item for item in loaded if item.get("decision_id") not in known)
@@ -170,7 +184,7 @@ class MVPHTTPState:
 
     def handle(self, method: str, path: str, body: dict[str, Any],
                session: Any, almacen: Any) -> tuple[int, dict[str, Any]]:
-        """Despacha una ruta `/mvp/*` ya autenticada."""
+        """Despacha una ruta /mvp ya autenticada."""
         with self.lock:
             tenant_id = session.usuario.tenant_id
             if method == "POST" and path == "/mvp/documentos":
@@ -185,8 +199,14 @@ class MVPHTTPState:
                     tenant_id, case_id, filename, content, media_type.strip())
                 self.documents[document.document_id] = tenant_id
                 if self.repository is not None:
-                    self.repository.save_document(
-                        tenant_id, document, sha256_bytes(content))
+                    try:
+                        self.repository.save_document_with_audit(
+                            tenant_id, document, sha256_bytes(content),
+                            self._latest_event())
+                    except MVPPersistenceError as exc:
+                        self.documents.pop(document.document_id, None)
+                        self._discard_latest_event()
+                        raise self._persistence_unavailable(exc) from exc
                 return 201, {"documento": document.as_dict(),
                              "contenido_sha256": sha256_bytes(content)}
 
@@ -205,9 +225,17 @@ class MVPHTTPState:
                 search_id = hashlib.sha256(
                     f"{tenant_id}:{case_id}:{snapshot.query}:{snapshot.workflow_version}".encode()
                 ).hexdigest()[:24]
-                self.searches[search_id] = SearchContext(tenant_id, case_id, snapshot)
+                context = SearchContext(tenant_id, case_id, snapshot)
+                self.searches[search_id] = context
                 if self.repository is not None:
-                    self.repository.save_search(tenant_id, search_id, case_id, snapshot)
+                    try:
+                        self.repository.save_search_with_audit(
+                            tenant_id, search_id, case_id, snapshot,
+                            self._latest_event())
+                    except MVPPersistenceError as exc:
+                        self.searches.pop(search_id, None)
+                        self._discard_latest_event()
+                        raise self._persistence_unavailable(exc) from exc
                 return 201, {"search_id": search_id, "case_id": case_id,
                              "investigacion": snapshot.as_dict()}
 
@@ -232,7 +260,14 @@ class MVPHTTPState:
                     jurisdiction.strip())
                 self.drafts[draft.draft_id] = DraftContext(tenant_id, case_id)
                 if self.repository is not None:
-                    self.repository.save_draft(tenant_id, draft)
+                    try:
+                        self.repository.save_draft_with_audit(
+                            tenant_id, draft, self._latest_event())
+                    except MVPPersistenceError as exc:
+                        self.drafts.pop(draft.draft_id, None)
+                        self.service.drafts.pop(draft.draft_id, None)
+                        self._discard_latest_event()
+                        raise self._persistence_unavailable(exc) from exc
                 return 201, {"borrador": draft.as_dict()}
 
             if method == "POST" and path.startswith("/mvp/borradores/"):
@@ -251,7 +286,7 @@ class MVPHTTPState:
                         raise MVPHTTPError(400, "fundamento inválido")
                     try:
                         record = self.service.decide(
-                            session.usuario.tenant_id, context.case_id, draft_id,
+                            tenant_id, context.case_id, draft_id,
                             session.usuario.id, session.usuario.rol,
                             session.usuario.matricula, decision, fundamento)
                     except ApprovalRequired as exc:
@@ -261,16 +296,28 @@ class MVPHTTPState:
                     except MVPError as exc:
                         raise MVPHTTPError(422, str(exc)) from exc
                     if self.repository is not None:
-                        self.repository.save_decision(tenant_id, record)
+                        try:
+                            self.repository.save_decision_with_audit(
+                                tenant_id, record, self._latest_event())
+                        except MVPPersistenceError as exc:
+                            self.service.decisions.pop()
+                            self._discard_latest_event()
+                            raise self._persistence_unavailable(exc) from exc
                     return 201, {"decision": record}
                 if len(parts) == 2 and parts[1] == "exportar":
                     with tempfile.TemporaryDirectory(prefix="custos-mvp-") as temp:
                         target = Path(temp) / f"{draft_id}.docx"
                         try:
                             self.service.export_docx(
-                                session.usuario.tenant_id, context.case_id,
-                                draft_id, target)
+                                tenant_id, context.case_id, draft_id, target)
+                            if self.repository is not None:
+                                self.repository.save_audit(
+                                    tenant_id, self._latest_event())
+                        except MVPPersistenceError as exc:
+                            self._discard_latest_event()
+                            raise self._persistence_unavailable(exc) from exc
                         except ApprovalRequired as exc:
+                            self._discard_latest_event()
                             raise MVPHTTPError(403, str(exc)) from exc
                         content = target.read_bytes()
                     return 200, {
