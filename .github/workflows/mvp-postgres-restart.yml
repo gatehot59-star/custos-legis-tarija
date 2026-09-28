@@ -1,0 +1,74 @@
+name: mvp-postgres-restart
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "backend/test_mvp_postgres_restart.py"
+      - ".github/workflows/mvp-postgres-restart.yml"
+      - "backend/mvp_*.py"
+      - "backend/api.py"
+      - "backend/almacen.py"
+      - "infra/**"
+  push:
+    paths:
+      - "backend/test_mvp_postgres_restart.py"
+      - ".github/workflows/mvp-postgres-restart.yml"
+      - "backend/mvp_*.py"
+      - "backend/api.py"
+      - "backend/almacen.py"
+      - "infra/**"
+
+permissions:
+  contents: read
+
+jobs:
+  restart:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: custos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/custos
+      DATABASE_URL_APP: postgresql://custos_app:CAMBIAR_EN_PRODUCCION@localhost:5432/custos
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: instalar cliente y driver
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+          python3 -m pip install --quiet 'psycopg[binary]'
+
+      - name: aplicar esquema y migración MVP
+        run: |
+          set -euo pipefail
+          psql -h localhost -U postgres -d custos -v ON_ERROR_STOP=1 -f infra/init.sql
+          psql -h localhost -U postgres -d custos -v ON_ERROR_STOP=1 -f infra/2026-09-26-mvp-persistence.sql
+
+      - name: localizar contenedor PostgreSQL del servicio
+        run: |
+          set -euo pipefail
+          PG_CONTAINER_ID="$(docker ps --format '{{.ID}} {{.Image}}' | awk '$2 ~ /postgres/ {print $1; exit}')"
+          test -n "${PG_CONTAINER_ID}"
+          echo "PG_CONTAINER_ID=${PG_CONTAINER_ID}" >> "${GITHUB_ENV}"
+          echo "contenedor PostgreSQL medido: ${PG_CONTAINER_ID}"
+
+      - name: compilar y medir caída durante flujo HTTP
+        run: |
+          set -euo pipefail
+          python3 -m py_compile backend/test_mvp_postgres_restart.py backend/mvp_server.py backend/mvp_http.py
+          python3 backend/test_mvp_postgres_restart.py
