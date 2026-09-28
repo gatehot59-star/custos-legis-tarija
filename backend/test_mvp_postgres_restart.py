@@ -3,7 +3,7 @@
 
 La prueba no usa SQLite ni sesiones inyectadas. Levanta el servidor HTTP real
 con PostgresAlmacen, detiene el contenedor de PostgreSQL entre pasos, observa
-la respuesta del flujo y luego reintenta después de arrancarlo.
+la respuesta del flujo y luego lo vuelve a arrancar y reintenta.
 """
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ class CorpusFixture:
             "vigencia": "VIGENTE",
             "validacion_numerica": {"status": "validated", "expected": "10",
                                     "observed": "10", "method": "fixture"},
-        }]}  # noqa: E501
+        }]}
 
 
 def check(name: str, actual, expected) -> None:
@@ -85,14 +85,14 @@ def request(port: int, method: str, path: str, body: object | None = None,
     except urllib.error.HTTPError as error:
         try:
             return error.code, json.loads(error.read())
-        except Exception:  # pragma: no cover - sólo para respuestas no JSON
+        except Exception:
             return error.code, {}
     except Exception as error:  # pragma: no cover - la suite lo hace visible
         return 599, {"error": f"cliente HTTP: {type(error).__name__}: {error}"}
 
 
 def admin_execute(sql: str, args: tuple = ()) -> None:
-    """Ejecuta preparación o limpieza con el administrador del CI."""
+    """Ejecuta una instrucción con el administrador del CI."""
     with psycopg.connect(ADMIN_DSN, autocommit=True) as connection:
         connection.execute(sql, args)
 
@@ -148,18 +148,13 @@ def cleanup() -> None:
     """Borra sólo las filas sintéticas después de conservar el resultado."""
     if stopped:
         start_postgres()
-    admin_execute(
-        "DELETE FROM public.cl_mvp_audit_events WHERE tenant_id = %s; "
-        "DELETE FROM public.cl_mvp_decisions WHERE tenant_id = %s; "
-        "DELETE FROM public.cl_mvp_drafts WHERE tenant_id = %s; "
-        "DELETE FROM public.cl_mvp_searches WHERE tenant_id = %s; "
-        "DELETE FROM public.cl_mvp_documents WHERE tenant_id = %s; "
-        "DELETE FROM public.cases WHERE tenant_id = %s; "
-        "DELETE FROM public.users WHERE tenant_id = %s; "
-        "DELETE FROM public.tenants WHERE id = %s;",
-        (TENANT_ID, TENANT_ID, TENANT_ID, TENANT_ID, TENANT_ID,
-         TENANT_ID, TENANT_ID, TENANT_ID),
-    )
+    for table in (
+        "cl_mvp_audit_events", "cl_mvp_decisions", "cl_mvp_drafts",
+        "cl_mvp_searches", "cl_mvp_documents", "cases", "users",
+    ):
+        admin_execute(f"DELETE FROM public.{table} WHERE tenant_id = %s",
+                      (TENANT_ID,))
+    admin_execute("DELETE FROM public.tenants WHERE id = %s", (TENANT_ID,))
 
 
 def main() -> int:

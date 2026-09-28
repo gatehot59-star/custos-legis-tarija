@@ -62,7 +62,7 @@ jobs:
       - name: localizar contenedor PostgreSQL del servicio
         run: |
           set -euo pipefail
-          PG_CONTAINER_ID="$(docker ps --filter 'ancestor=postgres:16' --format '{{.ID}}' | head -n 1)"
+          PG_CONTAINER_ID="$(docker ps --format '{{.ID}} {{.Image}}' | awk '$2 ~ /postgres/ {print $1; exit}')"
           test -n "${PG_CONTAINER_ID}"
           echo "PG_CONTAINER_ID=${PG_CONTAINER_ID}" >> "${GITHUB_ENV}"
           echo "contenedor PostgreSQL medido: ${PG_CONTAINER_ID}"
