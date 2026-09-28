@@ -1,0 +1,62 @@
+name: mvp-persistence
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "backend/mvp_*.py"
+      - "backend/test_mvp_persistence.py"
+      - "infra/**"
+      - ".github/workflows/mvp-persistence.yml"
+  push:
+    paths:
+      - "backend/mvp_*.py"
+      - "backend/test_mvp_persistence.py"
+      - "infra/**"
+      - ".github/workflows/mvp-persistence.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  mvp-persistence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: custos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/custos
+      DATABASE_URL_APP: postgresql://custos_app:CAMBIAR_EN_PRODUCCION@localhost:5432/custos
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: instalar dependencias
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+          python3 -m pip install --quiet 'psycopg[binary]'
+
+      - name: aplicar esquema y migración MVP
+        run: |
+          set -euo pipefail
+          psql -h localhost -U postgres -d custos -v ON_ERROR_STOP=1 -f infra/init.sql
+          psql -h localhost -U postgres -d custos -v ON_ERROR_STOP=1 -f infra/2026-09-26-mvp-persistence.sql
+
+      - name: compilar y probar persistencia
+        run: |
+          set -euo pipefail
+          python3 -m py_compile backend/mvp_persistence.py backend/mvp_http.py backend/test_mvp_persistence.py
+          PYTHONPATH=backend python3 backend/test_mvp_persistence.py

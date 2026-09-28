@@ -1,0 +1,43 @@
+name: mvp-http
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "backend/**"
+      - ".github/workflows/mvp-http.yml"
+  push:
+    paths:
+      - "backend/**"
+      - ".github/workflows/mvp-http.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  mvp-http:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: instalar driver del backend
+        run: python3 -m pip install --quiet 'psycopg[binary]'
+
+      - name: compilar el vertical y sus rutas
+        run: python3 -m py_compile backend/api.py backend/mvp.py backend/mvp_contract.py backend/mvp_http.py backend/mvp_server.py backend/test_mvp_http.py backend/test_directed_graph.py
+
+      - name: probar el núcleo MVP
+        run: python3 backend/test_mvp.py
+
+      - name: probar el falsador de aristas dirigidas
+        run: python3 backend/test_directed_graph.py
+
+      - name: probar el benchmark de búsqueda
+        run: python3 backend/test_benchmark_busqueda.py
+
+      - name: probar las rutas HTTP reales y errores de entrada
+        run: python3 backend/test_mvp_http.py
+
+      - name: ejecutar regresión completa de API
+        run: python3 backend/test_api.py
