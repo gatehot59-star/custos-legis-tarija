@@ -1,0 +1,96 @@
+EVIDENCIA CRUDA · auditoria 2026-10-15-01 · paquete SAS Astra Legal Tech
+Tomada el 15-oct-2026 entre 22:45 y 23:40 ART. Maquinas: sandbox ClickUp Brain (python-docx) y brain-env (gateway build).
+
+== 1. Artefactos (sandbox, sha256 de los adjuntos descargados)
+b9536376e9e2151bcc1fd74f5a31b106ee2624d9721f14473ef1d2b4e50bad7a  Astra_Legal_Tech_SAS_paquete_constitucion.docx (v2)  41161 bytes, 56 parrafos
+6c9584fe19e480d0def5091f7e7cccbffab65b2830eeca91835ac051d71f8b4b  Convenio_UNO_Astra_Legal_Tech_v2.docx  16884 bytes, 104 parrafos, 3 tablas
+04f805ea0c24481cc27581aca3e96255be0e81630539742557f55ef36dee4bca  astra-legal-tech-resumen-2026-10-15.md  197 lineas, 22 links
+indice git fa265ff:docs/agents/respuestas/2026-10-15-04-resumen-astra-legal-tech.md -> sha256 15ae0e32615d75aa513cf156fdc5f94c799d7586a1db2ab971a7a6183ee6a3c6, 14 lineas (no es el mismo archivo)
+
+== 2. Repo (brain-env, clon fresco /workspace/audit-astra-20261015)
+branch head fa265ff570e479f3350ad6e34c50798cac8c1551
+main head   b37fce3d968b6b40f42e2b5c81de669bf333a950
+merge-base  b37fce3d968b6b40f42e2b5c81de669bf333a950
+ahead/behind (main...rama) 0 12
+PRs con head gatehot59-star:docs/2026-10-15-plan-salta-yacuiba (state=all): []
+git cat-file -e de los links del resumen:
+OK  5440916 docs/agents/respuestas/2026-10-15-plan-salta-yacuiba.md
+OK  18c4890 docs/agents/respuestas/2026-10-15-02-ajuste-plan-yacuiba.md
+OK  d7a7dfc docs/agents/respuestas/2026-10-15-03-sas-salta-vs-tarija.md
+OK  6a22985 docs/legal/2026-10-15-sas-salta-paquete.md
+OK  6234fe4 docs/legal/2026-10-15-sas-salta-paquete.md
+OK  fb1eb97 docs/legal/2026-10-15-sas-salta-ruta-sin-escribano.md
+OK  c2e2263 docs/legal/2026-10-15-inpi-astra-legal-tech.md
+OK  11f4946 docs/legal/2026-10-15-senapi-astra-legal-tech.md
+OK  4e3e1ee docs/legal/2026-10-15-borrador-poder-especial-representante-bolivia.md
+OK  ea80705 docs/legal/2026-10-15-convenio-uno-astra.md
+OK  82f40ad docs/legal/2026-10-15-calendario-uno.md
+Lineas vencidas en el head fa265ff:
+  docs/legal/2026-10-15-convenio-uno-astra.md L11: "Capacitacion 3-nov; ejecucion 3-27 nov con 10 tareas validadas por docentes; informe hasta 18-dic"
+  docs/legal/2026-10-15-convenio-uno-astra.md L14: "... Always On en Abacus antes del 3-nov."
+  docs/legal/2026-10-15-sas-salta-paquete.md L10: "instrumento con sellado Rentas (1,2% + 0,3%, minimos 20 UT) certificado por escribano (digital)"
+  docs/legal/2026-10-15-sas-salta-paquete.md L14: "NO VERIFICADO: valor UT Salta, honorarios, acreditacion del deposito del 25%, plazo real."
+  docs/agents/respuestas/2026-10-15-04-resumen-astra-legal-tech.md L9: "Marcas: INPI libre con control positivo ..."
+
+== 3. Estatuto contra el modelo oficial (11 frases fijas del Anexo III)
+Frases:
+  pudiendo establecer agencias, sucursales y todo tipo de establecimiento o representación
+  Duración: El plazo de duración de la sociedad será de
+  contados a partir de la fecha de su constitución
+  realizar por cuenta propia o ajena, o asociada a terceros, dentro o fuera del país
+  plena capacidad de derecho para realizar cualquier acto jurídico
+  acciones ordinarias nominativas no endosables
+  Mora en la integración
+  Transferencia de las acciones
+  Durante todo el tiempo en el cual la sociedad la integre un único socio
+  artículo 299 de la Ley General de Sociedades
+  ARTICULO PRIMERO
+Resultado:
+  DOCX v2 (sandbox):                                   0/11
+  Instrumento Constitutivo Tipo.docx oficial (brain-env): 11/11   (sha256 e37399b999a494de..., 20959 bytes)
+  ANEXO III del PDF Res 28/2019 (brain-env):            11/11   (PDF sha256 d29c8bcc1fc968d1..., 24 paginas)
+  Frase fija del Anexo IV "acciones ordinarias nominativas no endosables de $1 y un voto cada una" en el DOCX: NO
+Lo que dice el DOCX en esos puntos (literal):
+  "SEGUNDO. Plazo. Noventa y nueve (99) años contados desde su inscripción."
+  "acciones ordinarias escriturales, de un peso ($1) valor nominal cada una"
+  "TERCERO. Objeto. La sociedad tiene por objeto realizar, por cuenta propia, de terceros o asociada a terceros, en el país o en el extranjero"
+Nota del DOCX (literal): "solicito la inscripción del instrumento constitutivo por el procedimiento abreviado previsto en el artículo 38 de la Ley 27.349 y en la Resolución IGPJ N° 28/2019"
+Edicto: objeto en el instrumento 1921 caracteres | objeto en el edicto 278 caracteres | ratio 0.14
+Anexo III (encabezado literal): "[Completar antes de imprimir, reemplazando por lo que corresponda y/o borrar el texto aclaratorio. Los restantes campos no pueden ser modificados]."
+Anexo III, objeto (literal): "(La redacción del objeto social le corresponde a los socios, conforme art. 36 inc. 4 Ley 27.349)"
+Anexo IV (literal): "Objeto: [Transcribir Íntegramente el objeto social]."
+Res 28/2019 art. 8 (literal): "La inscripción será realizada en ... plazo abreviado que determina el Artículo 38 de la Ley 27.349, siempre que el solicitante utilice el modelo tipo de instrumento constitutivo, y el modelo de edicto, aprobados en esta resolución en los Anexos III y IV, y cuando todos los otorgantes fueran personas humanas actuando por derecho propio y el aporte fuera en dinero."
+
+== 4. Requisitos vigentes de la IGPJ (personasjuridicas.salta.gob.ar/sas.html, sha256 20740057f169c7cc..., leido el 15-oct ~23:15 ART)
+"1- INSTRUMENTO CONSTITUTIVO TIPO, con firma de todos los socios, con el sellado de Rentas correspondiente. Certificados por escribano público y firma digital. A) Instrumento privado con firma digital de los socios. B) Instrumento privado con certificación notarial digital (modalidad sugerida). ... C) Instrumento público con certificación notarial digital ... se sugiere adoptar las opciones B o C.
+2- FORMULARIO DE DECLARACIÓN JURADA "PEP" de los administradores titulares y suplentes (Res. UIF 11/2011). Se requerirá una DDJJ por cada administrador, certificada por escribano público.
+3- Acreditación de la integración del capital social (25% del capital mínimo – art. 41 Ley 27.349), mediante: Constancia de depósito bancario. Acta notarial. Certificación contable de contador público independiente certificada por el Consejo Profesional.
+4- Constancia de CUIL o CDI de los socios y administradores.
+5- Comprobantes de pago de impuestos fiscales: Impuesto a la inscripción de sociedad: 0,3% sobre el capital social. Impuesto al acto: 1,2% sobre el capital social."
+Formularios enlazados en la pagina: assets/files/Instrumento Constitutivo Tipo.docx · assets/files/DECLARACION JURADA  PEP UIF.docx · assets/files/ValoresTributarios.pdf
+Formulario PEP oficial: sha256 2948aee69883d544..., 118828 bytes. Texto: "declara bajo juramento ... que SI/NO se encuentra incluido y/o alcanzado dentro de la Nomina de Funciones de Personas Expuestas Politicamente aprobada por la Unidad de Informacion Financiera" (no cita numero de resolucion).
+Checklist final del DOCX v2 (literal): Denominación reservada · Firma digital de Abraham · Firma digital de la hermana · Sede y correo completos · Datos de la hermana completos · Sellado de Rentas pagado · Instrumento, nota y 2 DDJJ firmados · Carga en Portal de Autogestión IGPJ · Edicto publicado · Inscripción recibida -> CUIT de la SAS en ARCA
+Busqueda en el DOCX: "depósito" 0 · "acredit" 0 · "certificación contable" 0 · "acta notarial" 0 · "CDI" 0 · "Instrumento Constitutivo Tipo" 0 · "Anexo" 0
+Paso 3 del DOCX (literal): "Firmar digitalmente este instrumento, la nota y las DDJJ PEP. Así no hace falta certificar firmas ante escribano."
+
+== 5. SENAPI (brain-env /workspace/senapi/res.json; se omiten los fragmentos con nombres de personas)
+gaceta paginas MARCA ASTRA LEGAL_TECH token
+70     452     966   2     0          RASTRAS x2
+69     444     976   0     0          -
+68     441     940   0     0          -
+67     375     763   1     0          HANSASTRASSE
+66     425     843   0     0          -
+65     399     853   3     0          FASTRACK x3
+64     453     945   1     0          EPIGASTRALGIA
+63     402     833   2     0          ELASTRADOR, CASTRACIÓN
+suma 63-70: 3391 paginas, 7119 MARCA, 9 ASTRA (todas fragmentos), 0 LEGAL TECH
+62: error URLError(TimeoutError(110, 'Connection timed out'))
+61: 450 paginas, 856 MARCA, 1 ASTRA, 0 LEGAL TECH. Fragmento literal:
+  "LES; SERVICIOS DE AGRICULTURA, HORTICULTURA Y SILVICULTURA. PRODUCTOS NOMBRE DEL SIGNO 262560NÚMERO DE PUBLICACIÓN ASTRA BY KROMASOL TIPO DE SIGNO FECHA DE SOLICITUD MARCA PRODUCTO DENOMINACIÓN 201376 - 2025 01/10/2025 GENERO DEL SIGNO NÚMERO DE SOLICITUD PAÍS DEL TITULAR MX"
+mtimes UTC: g61.pdf 2026-10-16T00:56:53Z · g61.txt 00:57:55Z · res.json 00:57:55Z · scan_done.txt "Fri Oct 16 00:57:55 2026"
+commit 11f4946 (SENAPI): 2026-10-16T00:58:02Z
+Doc SAS, seccion SENAPI, fechada "(15-oct, 22:10)" ART = 01:10Z. Texto: "La 62 falló por timeout de red y la 61 quedó sin procesar." y "unas 6.800 menciones de MARCA".
+
+== 6. Pizarron (nexus.db por el servicio sqlite)
+SELECT ... FROM mensajes WHERE ts >= '2026-10-15T20:00' -> 0 filas; ultimo mensaje: id 250, 2026-10-07T12:15:06Z, brain -> tachi
+reportes: ultimas filas id 117 (brain, 2026-10-15 05:18:02 UTC), 116, 115; ninguna del trabajo SAS (commits de 23:45Z del 15-oct a 01:30Z del 16-oct)
