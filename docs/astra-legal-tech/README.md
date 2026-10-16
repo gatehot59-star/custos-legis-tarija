@@ -12,6 +12,7 @@ Base: la auditoría `docs/auditorias/2026-10-15-01-auditoria-paquete-sas-astra.m
 | 04 | `04-correo-uno-vicerrectorado.md` | correo al Vicerrectorado de Yacuiba (versión 2) y aviso por WhatsApp | el texto del archivo | https://app.clickup.com/90171457413/docs/2kza6fw5-23357 (al final) |
 | 05 | `05-marcas-inpi-senapi.md` | búsquedas de marca en Argentina y Bolivia | - | https://app.clickup.com/90171457413/docs/2kza6fw5-23297 |
 | 06 | `06-calendario-uno.md` | calendario de la UNO y fechas del piloto | - | https://app.clickup.com/90171457413/docs/2kza6fw5-23257 |
+| 07 | `07-sitio-web.md` | sitio web, prototipo v1 (no publicado) | https://app.clickup.com/90171457413/artifact/2kza6fw5-23717 | https://app.clickup.com/90171457413/docs/2kza6fw5-23737 |
 
 ## Criterio de presentación (Abraham, 16-oct 12:46)
 
@@ -25,6 +26,7 @@ Ante terceros, Astra Legal Tech se presenta como cualquier empresa argentina que
 4. Del 23-nov al 4-dic: informe de los docentes. Antes del 11-dic: acta de cierre y certificados.
 5. Con la SAS inscripta: comunicarlo a la UNO (cláusula "Sociedad en formación") y otorgar y apostillar el poder (02).
 6. Marcas (05): búsqueda oficial en SENAPI y registro de Corpus Tarija y Custos Legis antes de hacer propaganda en Tarija.
+7. Sitio web (07): registrar astralegaltech.com y crear el buzón contacto@ antes de publicarlo. El 07 se agregó el 16-oct 15:40 y no entra en el re-chequeo de las 12:50.
 
 ## Qué se borró de la rama el 16-oct (la historia queda intacta)
 
