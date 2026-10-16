@@ -1,6 +1,6 @@
 # Astra Legal Tech: documentación vigente
 
-Actualizado el 16-oct-2026 (12:50 ART: convenio v4 y correo v2). **Esta carpeta es lo único que se usa.** El resto de la rama se borró el 16-oct a pedido de Abraham ("solo debe quedar la documentación que usaré, todo lo auditado"). Los archivos viejos siguen en la historia de git, no en el árbol.
+Actualizado el 16-oct-2026 (12:50 ART: convenio v4 y correo v2; 17:15 ART: sitio web v3). **Esta carpeta es lo único que se usa.** El resto de la rama se borró el 16-oct a pedido de Abraham ("solo debe quedar la documentación que usaré, todo lo auditado"). Los archivos viejos siguen en la historia de git, no en el árbol.
 
 Base: la auditoría `docs/auditorias/2026-10-15-01-auditoria-paquete-sas-astra.md` en main `29b65aa` (veredicto ROJO, corregido con el paquete v3; Doc https://app.clickup.com/90171457413/docs/2kza6fw5-23457) y el re-chequeo de abajo.
 
@@ -12,11 +12,13 @@ Base: la auditoría `docs/auditorias/2026-10-15-01-auditoria-paquete-sas-astra.m
 | 04 | `04-correo-uno-vicerrectorado.md` | correo al Vicerrectorado de Yacuiba (versión 2) y aviso por WhatsApp | el texto del archivo | https://app.clickup.com/90171457413/docs/2kza6fw5-23357 (al final) |
 | 05 | `05-marcas-inpi-senapi.md` | búsquedas de marca en Argentina y Bolivia | - | https://app.clickup.com/90171457413/docs/2kza6fw5-23297 |
 | 06 | `06-calendario-uno.md` | calendario de la UNO y fechas del piloto | - | https://app.clickup.com/90171457413/docs/2kza6fw5-23257 |
-| 07 | `07-sitio-web.md` | sitio web, prototipo v1 (no publicado) | https://app.clickup.com/90171457413/artifact/2kza6fw5-23717 | https://app.clickup.com/90171457413/docs/2kza6fw5-23737 |
+| 07 | `07-sitio-web.md` | sitio web, prototipo v3 (no publicado): seis productos y ventanas de empresa, inversores y Corpus Legis | https://app.clickup.com/90171457413/artifact/2kza6fw5-23717?version=3 | https://app.clickup.com/90171457413/docs/2kza6fw5-23737 |
 
 ## Criterio de presentación (Abraham, 16-oct 12:46)
 
 Ante terceros, Astra Legal Tech se presenta como cualquier empresa argentina que ofrece servicios al exterior: sin "fundador", sin "recién creada" o "en constitución", sin "unipersonal", sin la provincia y sin listar productos. Los datos legales (sociedad en formación y compromiso personal hasta la inscripción) van sólo en el convenio, donde son relevantes.
+
+Excepción para los productos (Abraham, 16-oct 16:31): el sitio web sí muestra el portafolio, con estado honesto y sin datos del piloto. Nada del conectoma va en ninguna presentación de Astra.
 
 ## Orden de uso
 
@@ -26,7 +28,7 @@ Ante terceros, Astra Legal Tech se presenta como cualquier empresa argentina que
 4. Del 23-nov al 4-dic: informe de los docentes. Antes del 11-dic: acta de cierre y certificados.
 5. Con la SAS inscripta: comunicarlo a la UNO (cláusula "Sociedad en formación") y otorgar y apostillar el poder (02).
 6. Marcas (05): búsqueda oficial en SENAPI y registro de Corpus Tarija y Custos Legis antes de hacer propaganda en Tarija.
-7. Sitio web (07): registrar astralegaltech.com y crear el buzón contacto@ antes de publicarlo. El 07 se agregó el 16-oct 15:40 y no entra en el re-chequeo de las 12:50.
+7. Sitio web (07): registrar astralegaltech.com y crear el buzón contacto@ antes de publicarlo; confirmar los dos productos que faltan. El 07 se agregó el 16-oct 15:40 (v1), se rehízo a las 17:08 (v3) y no entra en el re-chequeo de las 12:50: tiene su propio control.
 
 ## Qué se borró de la rama el 16-oct (la historia queda intacta)
 
