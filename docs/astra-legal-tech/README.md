@@ -1,6 +1,6 @@
 # Astra Legal Tech: documentación vigente
 
-Actualizado el 16-oct-2026 (12:50 ART: convenio v4 y correo v2; 17:15 ART: sitio web v3; 22:05 ART: sitio publicado en la VM). **Esta carpeta es lo único que se usa.** El resto de la rama se borró el 16-oct a pedido de Abraham ("solo debe quedar la documentación que usaré, todo lo auditado"). Los archivos viejos siguen en la historia de git, no en el árbol.
+Actualizado el 17-oct-2026 (16-oct, 12:50 ART: convenio v4 y correo v2; 17:15 ART: sitio web v3; 22:05 ART: sitio publicado en la VM; 17-oct, 09:00 ART: empresas similares). **Esta carpeta es lo único que se usa.** El resto de la rama se borró el 16-oct a pedido de Abraham ("solo debe quedar la documentación que usaré, todo lo auditado"). Los archivos viejos siguen en la historia de git, no en el árbol.
 
 Base: la auditoría `docs/auditorias/2026-10-15-01-auditoria-paquete-sas-astra.md` en main `29b65aa` (veredicto ROJO, corregido con el paquete v3; Doc https://app.clickup.com/90171457413/docs/2kza6fw5-23457) y el re-chequeo de abajo.
 
@@ -14,6 +14,7 @@ Base: la auditoría `docs/auditorias/2026-10-15-01-auditoria-paquete-sas-astra.m
 | 06 | `06-calendario-uno.md` | calendario de la UNO y fechas del piloto | - | https://app.clickup.com/90171457413/docs/2kza6fw5-23257 |
 | 07 | `07-sitio-web.md` | sitio web v3: seis productos y ventanas de empresa, inversores y Corpus Legis | https://app.clickup.com/90171457413/artifact/2kza6fw5-23717?version=3 | https://app.clickup.com/90171457413/docs/2kza6fw5-23737 |
 | 08 | `08-publicacion-vm.md` | el sitio v3 publicado en la VM (vista previa, noindex) y cómo deshacerlo | https://150448fcc6.abacusai.cloud/astra/ | https://app.clickup.com/90171457413/docs/2kza6fw5-23737 |
+| 09 | `09-empresas-similares.md` | 36 empresas parecidas a Astra con link verificado el 17-oct: SAS de verdad (Argentina y Colombia), IA jurídica argentina, pares de Bolivia y referencias del mundo | los links del archivo | https://app.clickup.com/90171457413/docs/2kza6fw5-23737/2kza6fw5-26517 |
 
 ## Criterio de presentación (Abraham, 16-oct 12:46)
 
@@ -29,7 +30,8 @@ Excepción para los productos (Abraham, 16-oct 16:31): el sitio web sí muestra 
 4. Del 23-nov al 4-dic: informe de los docentes. Antes del 11-dic: acta de cierre y certificados.
 5. Con la SAS inscripta: comunicarlo a la UNO (cláusula "Sociedad en formación") y otorgar y apostillar el poder (02).
 6. Marcas (05): búsqueda oficial en SENAPI y registro de Corpus Tarija y Custos Legis antes de hacer propaganda en Tarija.
-7. Sitio web (07 y 08): vista previa pública en https://150448fcc6.abacusai.cloud/astra/ desde el 16-oct 21:57. Para la dirección definitiva: registrar astralegaltech.com, crear el buzón contacto@ y confirmar los dos productos que faltan. El 07 se agregó el 16-oct 15:40 (v1), se rehízo a las 17:08 (v3) y no entra en el re-chequeo de las 12:50: tiene su propio control.
+7. Sitio web (07 y 08): vista previa pública en https://150448fcc6.abacusai.cloud/astra/ desde el 16-oct 21:57. Para la dirección definitiva: registrar astralegaltech.com, crear el buzón contacto@ y confirmar los dos productos que faltan. El 07 se agregó el 16-oct 15:40 (v1), se rehizo a las 17:08 (v3) y no entra en el re-chequeo de las 12:50: tiene su propio control.
+8. Empresas similares (09): referencia para el sitio, para inversores y para la reunión con la UNO (Pixi Legal es el par directo en Bolivia). Con la SAS inscripta, postular a Astra en Next from Argentina de Cancillería (convocatoria abierta hasta el 31-dic-2026).
 
 ## Qué se borró de la rama el 16-oct (la historia queda intacta)
 
