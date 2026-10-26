@@ -1,0 +1,50 @@
+{
+ "inicio_utc": "2026-10-26T11:36:01Z",
+ "chromium": "153.0.8010.12",
+ "1_envenenar_con_v5_falsa": {
+  "v": "v5-falsa",
+  "h1": "v5-falsa",
+  "url": "https://astra.icca-engine.com/",
+  "status": 200
+ },
+ "2_control_portada_red_real": {
+  "v": "v5-falsa",
+  "h1": "v5-falsa",
+  "url": "https://astra.icca-engine.com/",
+  "status": 200
+ },
+ "3_destino_del_link_viejo": {
+  "v": "v5-falsa",
+  "h1": "v5-falsa",
+  "url": "https://astra.icca-engine.com/#/legal-tech-bolivia",
+  "status": 200
+ },
+ "4_link_nuevo_legal_tech_bolivia": {
+  "v": "v8 · 26-10-2026",
+  "h1": "Legal Tech y Legal Operations en Bolivia.",
+  "url": "https://astra.icca-engine.com/?pais=bolivia#/legal-tech-bolivia",
+  "status": 200,
+  "salto": {
+   "status": 302,
+   "headers": {
+    "cache-control": "no-store",
+    "clear-site-data": "\"cache\"",
+    "location": "/?pais=bolivia#/legal-tech-bolivia"
+   }
+  }
+ },
+ "5_portada_despues": {
+  "v": "v8 · 26-10-2026",
+  "h1": "Inteligencia jurídica que rinde cuentas.",
+  "url": "https://astra.icca-engine.com/",
+  "status": 200
+ },
+ "pedidos_al_servidor_falso": [
+  {
+   "t": 1793014562.499,
+   "path": "/"
+  }
+ ],
+ "pedidos_al_falso_con_red_real": [],
+ "fin_utc": "2026-10-26T11:36:12Z"
+}

@@ -1,0 +1,61 @@
+{
+ "chromium": "153.0.8010.12",
+ "escritorio": {
+  "status_final": 200,
+  "headers_final": {
+   "cache-control": "no-cache, no-transform",
+   "cf-cache-status": "DYNAMIC"
+  },
+  "cadena_redirect": [
+   {
+    "url": "https://astra.icca-engine.com/legal-tech-bolivia",
+    "status": 302,
+    "headers": {
+     "cache-control": "no-store",
+     "location": "/?pais=bolivia#/legal-tech-bolivia"
+    }
+   }
+  ],
+  "info": {
+   "url": "https://astra.icca-engine.com/?pais=bolivia#/legal-tech-bolivia",
+   "version_meta": "v8 · 26-10-2026",
+   "h1": "Legal Tech y Legal Operations en Bolivia.",
+   "pie": "Sitio v8 · 26/10/2026",
+   "ingresar": "Ingresar",
+   "crear_cuenta": "Crear cuenta",
+   "ancho_doc": 1280,
+   "ancho_vp": 1280
+  },
+  "pedidos_a_terceros": [],
+  "errores_consola": []
+ },
+ "celular": {
+  "status_final": 200,
+  "headers_final": {
+   "cache-control": "no-cache, no-transform",
+   "cf-cache-status": "DYNAMIC"
+  },
+  "cadena_redirect": [
+   {
+    "url": "https://astra.icca-engine.com/legal-tech-bolivia",
+    "status": 302,
+    "headers": {
+     "cache-control": "no-store",
+     "location": "/?pais=bolivia#/legal-tech-bolivia"
+    }
+   }
+  ],
+  "info": {
+   "url": "https://astra.icca-engine.com/?pais=bolivia#/legal-tech-bolivia",
+   "version_meta": "v8 · 26-10-2026",
+   "h1": "Legal Tech y Legal Operations en Bolivia.",
+   "pie": "Sitio v8 · 26/10/2026",
+   "ingresar": "Ingresar",
+   "crear_cuenta": "Crear cuenta",
+   "ancho_doc": 390,
+   "ancho_vp": 390
+  },
+  "pedidos_a_terceros": [],
+  "errores_consola": []
+ }
+}
