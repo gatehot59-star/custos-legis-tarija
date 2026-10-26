@@ -1,0 +1,30 @@
+[
+ [
+  "Cache-Control",
+  "no-store"
+ ],
+ [
+  "clear-site-data",
+  "\"cache\""
+ ],
+ [
+  "location",
+  "/?pais=bolivia#/legal-tech-bolivia"
+ ],
+ [
+  "referrer-policy",
+  "strict-origin-when-cross-origin"
+ ],
+ [
+  "x-content-type-options",
+  "nosniff"
+ ],
+ [
+  "x-frame-options",
+  "DENY"
+ ],
+ [
+  "x-robots-tag",
+  "noindex, nofollow, noarchive"
+ ]
+]

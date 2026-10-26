@@ -1,0 +1,306 @@
+{
+ "inicio_utc": "2026-10-26T11:39:17Z",
+ "motores": {
+  "chromium": {
+   "version": "153.0.8010.12",
+   "escenarios": {
+    "A_como_estaba": {
+     "salto_302": [
+      [
+       "Location",
+       "/#/legal-tech-{slug}"
+      ]
+     ],
+     "1_visita_cuando_estaba_v5": {
+      "v": "v5",
+      "url": "http://localhost:32869/"
+     },
+     "2_control_inicio_con_v8_publicada": {
+      "v": "v5",
+      "url": "http://localhost:32869/"
+     },
+     "3_toca_link_legal_tech_bolivia": {
+      "v": "v5",
+      "url": "http://localhost:32869/#/legal-tech-bolivia",
+      "ms": 449
+     },
+     "4_inicio_despues": {
+      "v": "v5",
+      "url": "http://localhost:32869/"
+     },
+     "pedidos_que_llegaron_al_servidor": [
+      {
+       "t": 1793014758.623,
+       "modo_servidor": "v5",
+       "path": "/",
+       "if_none_match": null
+      },
+      {
+       "t": 1793014759.142,
+       "modo_servidor": "v8",
+       "path": "/legal-tech-bolivia",
+       "if_none_match": null
+      }
+     ]
+    },
+    "B_clear_site_data": {
+     "salto_302": [
+      [
+       "Location",
+       "/#/legal-tech-{slug}"
+      ],
+      [
+       "Clear-Site-Data",
+       "\"cache\""
+      ],
+      [
+       "Cache-Control",
+       "no-store"
+      ]
+     ],
+     "1_visita_cuando_estaba_v5": {
+      "v": "v5",
+      "url": "http://localhost:32869/"
+     },
+     "2_control_inicio_con_v8_publicada": {
+      "v": "v5",
+      "url": "http://localhost:32869/"
+     },
+     "3_toca_link_legal_tech_bolivia": {
+      "v": "v8",
+      "url": "http://localhost:32869/#/legal-tech-bolivia",
+      "ms": 475
+     },
+     "4_inicio_despues": {
+      "v": "v8",
+      "url": "http://localhost:32869/"
+     },
+     "pedidos_que_llegaron_al_servidor": [
+      {
+       "t": 1793014759.824,
+       "modo_servidor": "v5",
+       "path": "/",
+       "if_none_match": null
+      },
+      {
+       "t": 1793014760.189,
+       "modo_servidor": "v8",
+       "path": "/legal-tech-bolivia",
+       "if_none_match": null
+      },
+      {
+       "t": 1793014760.194,
+       "modo_servidor": "v8",
+       "path": "/",
+       "if_none_match": null
+      },
+      {
+       "t": 1793014760.738,
+       "modo_servidor": "v8",
+       "path": "/",
+       "if_none_match": "\"v8\""
+      }
+     ]
+    },
+    "C_clear_site_data_y_query": {
+     "salto_302": [
+      [
+       "Location",
+       "/?pais={slug}#/legal-tech-{slug}"
+      ],
+      [
+       "Clear-Site-Data",
+       "\"cache\""
+      ],
+      [
+       "Cache-Control",
+       "no-store"
+      ]
+     ],
+     "1_visita_cuando_estaba_v5": {
+      "v": "v5",
+      "url": "http://localhost:32869/"
+     },
+     "2_control_inicio_con_v8_publicada": {
+      "v": "v5",
+      "url": "http://localhost:32869/"
+     },
+     "3_toca_link_legal_tech_bolivia": {
+      "v": "v8",
+      "url": "http://localhost:32869/?pais=bolivia#/legal-tech-bolivia",
+      "ms": 476
+     },
+     "4_inicio_despues": {
+      "v": "v8",
+      "url": "http://localhost:32869/"
+     },
+     "pedidos_que_llegaron_al_servidor": [
+      {
+       "t": 1793014760.915,
+       "modo_servidor": "v5",
+       "path": "/",
+       "if_none_match": null
+      },
+      {
+       "t": 1793014761.163,
+       "modo_servidor": "v8",
+       "path": "/legal-tech-bolivia",
+       "if_none_match": null
+      },
+      {
+       "t": 1793014761.173,
+       "modo_servidor": "v8",
+       "path": "/?pais=bolivia",
+       "if_none_match": null
+      },
+      {
+       "t": 1793014761.711,
+       "modo_servidor": "v8",
+       "path": "/",
+       "if_none_match": null
+      }
+     ]
+    },
+    "D_solo_query": {
+     "salto_302": [
+      [
+       "Location",
+       "/?pais={slug}#/legal-tech-{slug}"
+      ]
+     ],
+     "1_visita_cuando_estaba_v5": {
+      "v": "v5",
+      "url": "http://localhost:32869/"
+     },
+     "2_control_inicio_con_v8_publicada": {
+      "v": "v5",
+      "url": "http://localhost:32869/"
+     },
+     "3_toca_link_legal_tech_bolivia": {
+      "v": "v8",
+      "url": "http://localhost:32869/?pais=bolivia#/legal-tech-bolivia",
+      "ms": 467
+     },
+     "4_inicio_despues": {
+      "v": "v5",
+      "url": "http://localhost:32869/"
+     },
+     "pedidos_que_llegaron_al_servidor": [
+      {
+       "t": 1793014761.911,
+       "modo_servidor": "v5",
+       "path": "/",
+       "if_none_match": null
+      },
+      {
+       "t": 1793014762.157,
+       "modo_servidor": "v8",
+       "path": "/legal-tech-bolivia",
+       "if_none_match": null
+      },
+      {
+       "t": 1793014762.158,
+       "modo_servidor": "v8",
+       "path": "/?pais=bolivia",
+       "if_none_match": null
+      }
+     ]
+    },
+    "E_headers_copiados_del_vivo": {
+     "salto_302": [
+      [
+       "Cache-Control",
+       "no-store"
+      ],
+      [
+       "clear-site-data",
+       "\"cache\""
+      ],
+      [
+       "location",
+       "/?pais=bolivia#/legal-tech-bolivia"
+      ],
+      [
+       "referrer-policy",
+       "strict-origin-when-cross-origin"
+      ],
+      [
+       "x-content-type-options",
+       "nosniff"
+      ],
+      [
+       "x-frame-options",
+       "DENY"
+      ],
+      [
+       "x-robots-tag",
+       "noindex, nofollow, noarchive"
+      ]
+     ],
+     "1_visita_cuando_estaba_v5": {
+      "v": "v5",
+      "url": "http://localhost:32869/"
+     },
+     "2_control_inicio_con_v8_publicada": {
+      "v": "v5",
+      "url": "http://localhost:32869/"
+     },
+     "3_toca_link_legal_tech_bolivia": {
+      "v": "v8",
+      "url": "http://localhost:32869/?pais=bolivia#/legal-tech-bolivia",
+      "ms": 479
+     },
+     "4_inicio_despues": {
+      "v": "v8",
+      "url": "http://localhost:32869/"
+     },
+     "pedidos_que_llegaron_al_servidor": [
+      {
+       "t": 1793014762.856,
+       "modo_servidor": "v5",
+       "path": "/",
+       "if_none_match": null
+      },
+      {
+       "t": 1793014763.119,
+       "modo_servidor": "v8",
+       "path": "/legal-tech-bolivia",
+       "if_none_match": null
+      },
+      {
+       "t": 1793014763.127,
+       "modo_servidor": "v8",
+       "path": "/?pais=bolivia",
+       "if_none_match": null
+      },
+      {
+       "t": 1793014763.664,
+       "modo_servidor": "v8",
+       "path": "/",
+       "if_none_match": null
+      }
+     ]
+    }
+   }
+  },
+  "firefox": {
+   "no_medido": [
+    "BrowserType.launch: Executable doesn't exist at /workspace/homebrain/.cache/ms-playwright/firefox-1543/firefox/firefox",
+    "Looks like Playwright was just installed or updated.",
+    "Please run the following command to download new browsers:",
+    "playwright install",
+    "<3 Playwright Team"
+   ]
+  },
+  "webkit": {
+   "no_medido": [
+    "BrowserType.launch: Executable doesn't exist at /workspace/homebrain/.cache/ms-playwright/webkit-2359/pw_run.sh",
+    "Looks like Playwright was just installed or updated.",
+    "Please run the following command to download new browsers:",
+    "playwright install",
+    "<3 Playwright Team"
+   ]
+  }
+ },
+ "fin_utc": "2026-10-26T11:39:23Z"
+}
